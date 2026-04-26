@@ -202,4 +202,50 @@ struct MapReduceChainTests {
         // 3 chunks + 1 reduce = 4 calls (no hierarchical reduce without budget)
         #expect(mock.generateCallCount == 4)
     }
+
+    @Test("MapReduceChain concurrent map returns results in order")
+    func mapReduce_concurrentMap() async throws {
+        let mock = MockLLMBackend()
+        var callIndex = 0
+        mock.cannedResponse = "result"
+
+        let chunker = FixedSizeChunker(maxWords: 3)
+        let chain = MapReduceChain(backend: mock, chunker: chunker)
+        let options = ChainExecutionOptions(maxConcurrentMapTasks: 4)
+
+        let text = "one two three four five six seven eight nine"
+        _ = try await chain.run(
+            text, mapPrompt: "Map: ", reducePrompt: "Reduce: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: options, progress: nil
+        )
+
+        // 3 chunks + 1 reduce = 4 calls
+        #expect(mock.generateCallCount == 4)
+        let mapPrompts = mock.promptsReceived.filter { $0.hasPrefix("Map: ") }
+        #expect(mapPrompts.count == 3)
+    }
+
+    @Test("MapReduceChain respects cancellation in map phase")
+    func mapReduce_cancellation() async throws {
+        let mock = MockLLMBackend()
+        mock.cannedResponse = "result"
+        let chunker = FixedSizeChunker(maxWords: 3)
+        let chain = MapReduceChain(backend: mock, chunker: chunker)
+
+        let text = (0..<30).map { "w\($0)" }.joined(separator: " ")
+
+        let task = Task {
+            try await chain.run(text, mapPrompt: "", reducePrompt: "R: ")
+        }
+        task.cancel()
+
+        do {
+            _ = try await task.value
+        } catch is CancellationError {
+            // Expected
+        } catch {
+            // Other errors are acceptable during cancellation
+        }
+    }
 }

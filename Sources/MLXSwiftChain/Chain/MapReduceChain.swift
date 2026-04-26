@@ -7,6 +7,10 @@ import Foundation
 /// When the combined reduce prompt exceeds the context budget,
 /// hierarchical reduce is used: summaries are grouped, each group
 /// is reduced, and the process repeats until the final result fits.
+///
+/// Set `ChainExecutionOptions.maxConcurrentMapTasks` > 1 for parallel
+/// mapping (useful for remote backends; default of 1 is optimal for
+/// on-device MLX inference).
 public struct MapReduceChain: DocumentChain {
     public let backend: any LLMBackend
     public let chunker: any TextChunker
@@ -45,16 +49,24 @@ public struct MapReduceChain: DocumentChain {
         }
 
         // Map phase
-        var chunkResults: [String] = []
-        chunkResults.reserveCapacity(chunks.count)
-
-        for (i, chunk) in chunks.enumerated() {
-            let elapsed = ContinuousClock.now - start
-            progress?.report(ChainProgress.Update(phase: .mapping(step: i + 1, of: chunks.count), elapsedTime: elapsed))
-
-            let prompt = mapPrompt + chunk.text
-            let result = try await backend.generate(prompt: prompt, systemPrompt: systemPrompt)
-            chunkResults.append(result)
+        let chunkResults: [String]
+        if options.maxConcurrentMapTasks > 1 {
+            chunkResults = try await concurrentMap(
+                chunks: chunks,
+                mapPrompt: mapPrompt,
+                systemPrompt: systemPrompt,
+                options: options,
+                progress: progress,
+                start: start
+            )
+        } else {
+            chunkResults = try await sequentialMap(
+                chunks: chunks,
+                mapPrompt: mapPrompt,
+                systemPrompt: systemPrompt,
+                progress: progress,
+                start: start
+            )
         }
 
         // Reduce phase (hierarchical when needed)
@@ -77,6 +89,73 @@ public struct MapReduceChain: DocumentChain {
         return finalResult
     }
 
+    // MARK: - Map Strategies
+
+    private func sequentialMap(
+        chunks: [TextChunk],
+        mapPrompt: String,
+        systemPrompt: String?,
+        progress: ChainProgress?,
+        start: ContinuousClock.Instant
+    ) async throws -> [String] {
+        var results: [String] = []
+        results.reserveCapacity(chunks.count)
+
+        for (i, chunk) in chunks.enumerated() {
+            try Task.checkCancellation()
+            let elapsed = ContinuousClock.now - start
+            progress?.report(ChainProgress.Update(phase: .mapping(step: i + 1, of: chunks.count), elapsedTime: elapsed))
+
+            let prompt = mapPrompt + chunk.text
+            let result = try await backend.generate(prompt: prompt, systemPrompt: systemPrompt)
+            results.append(result)
+        }
+        return results
+    }
+
+    private func concurrentMap(
+        chunks: [TextChunk],
+        mapPrompt: String,
+        systemPrompt: String?,
+        options: ChainExecutionOptions,
+        progress: ChainProgress?,
+        start: ContinuousClock.Instant
+    ) async throws -> [String] {
+        try await withThrowingTaskGroup(of: (Int, String).self) { group in
+            var inFlight = 0
+            var nextIndex = 0
+            var results = [Int: String]()
+            results.reserveCapacity(chunks.count)
+            var completedCount = 0
+
+            while nextIndex < chunks.count || !group.isEmpty {
+                while inFlight < options.maxConcurrentMapTasks && nextIndex < chunks.count {
+                    let idx = nextIndex
+                    let chunk = chunks[idx]
+                    let prompt = mapPrompt + chunk.text
+                    group.addTask {
+                        try Task.checkCancellation()
+                        let result = try await self.backend.generate(prompt: prompt, systemPrompt: systemPrompt)
+                        return (idx, result)
+                    }
+                    inFlight += 1
+                    nextIndex += 1
+                }
+                if let (idx, result) = try await group.next() {
+                    results[idx] = result
+                    inFlight -= 1
+                    completedCount += 1
+                    let elapsed = ContinuousClock.now - start
+                    progress?.report(ChainProgress.Update(phase: .mapping(step: completedCount, of: chunks.count), elapsedTime: elapsed))
+                }
+            }
+
+            return (0..<chunks.count).map { results[$0]! }
+        }
+    }
+
+    // MARK: - Hierarchical Reduce
+
     private func hierarchicalReduce(
         summaries: [String],
         reducePrompt: String,
@@ -94,12 +173,12 @@ public struct MapReduceChain: DocumentChain {
         let reduceInput = reducePrompt + combined
 
         if fitsInSingleReduce(reduceInput, systemPrompt: systemPrompt, options: options) {
+            try Task.checkCancellation()
             let elapsed = ContinuousClock.now - start
             progress?.report(ChainProgress.Update(phase: .reducing, elapsedTime: elapsed))
             return try await backend.generate(prompt: reduceInput, systemPrompt: systemPrompt)
         }
 
-        // Split into groups and reduce each
         let groupSize = max(2, options.maxReduceGroupSize)
         let groups = stride(from: 0, to: summaries.count, by: groupSize).map { startIdx in
             Array(summaries[startIdx..<min(startIdx + groupSize, summaries.count)])
@@ -108,7 +187,8 @@ public struct MapReduceChain: DocumentChain {
         var intermediateSummaries: [String] = []
         intermediateSummaries.reserveCapacity(groups.count)
 
-        for (_, group) in groups.enumerated() {
+        for group in groups {
+            try Task.checkCancellation()
             let elapsed = ContinuousClock.now - start
             progress?.report(ChainProgress.Update(phase: .reducing, elapsedTime: elapsed))
 
@@ -132,6 +212,8 @@ public struct MapReduceChain: DocumentChain {
             depth: depth + 1
         )
     }
+
+    // MARK: - Helpers
 
     private func fitsInSingleReduce(_ prompt: String, systemPrompt: String?, options: ChainExecutionOptions) -> Bool {
         guard let budget = contextBudget else {
