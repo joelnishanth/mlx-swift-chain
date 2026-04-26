@@ -8,12 +8,14 @@ Document processing chains for [MLX Swift](https://github.com/ml-explore/mlx-swi
 
 Local LLMs have limited context windows (e.g. 8,192 tokens for Gemma models). Long documents — research papers, legal contracts, codebases, transcripts — easily exceed this limit. Naive prefix truncation discards most of the content:
 
-| Document Size | Prefix Truncation Coverage | mlx-swift-chain Coverage |
+| Document Size | Prefix Truncation Coverage | mlx-swift-chain Model-Visible Coverage |
 |---|---|---|
 | ~2,500 words | 100% | 100% |
 | ~5,000 words | ~60% | **100%** |
 | ~10,000 words | ~30% | **100%** |
 | ~20,000 words | **7%** | **100%** |
+
+Coverage here means input/model-visible coverage across chunks, not guaranteed perfect retention in the final reduced answer.
 
 ## Installation
 
@@ -154,7 +156,7 @@ See [docs/architecture.md](docs/architecture.md) for the component graph and [do
 ## Requirements
 
 - macOS 14.0+ / iOS 17.0+
-- Swift 5.9+
+- Swift 6.1+
 - [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) 3.31.3+
 
 ## License
