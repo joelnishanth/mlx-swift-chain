@@ -12,14 +12,11 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Swift version
-        run: swift --version
+      - name: Resolve dependencies
+        run: swift package resolve
 
-      - name: Swift package describe
-        run: swift package describe
-
-      - name: Swift build
+      - name: Build
         run: swift build
 
-      - name: Swift test
+      - name: Test
         run: swift test
