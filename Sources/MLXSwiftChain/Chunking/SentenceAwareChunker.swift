@@ -28,21 +28,16 @@ public struct SentenceAwareChunker: TextChunker {
         }
 
         var chunks: [TextChunk] = []
-        var sentenceIndex = 0
+        var currentSentences: [String] = []
+        var currentWordCount = 0
 
-        while sentenceIndex < rawSentences.count {
-            let startSentenceIndex = sentenceIndex
-            var endSentenceIndex = sentenceIndex
-            var chunkWordCount = 0
-
-            while endSentenceIndex < rawSentences.count {
-                let nextWords = sentenceWords[endSentenceIndex]
-                if chunkWordCount + nextWords > targetWords, endSentenceIndex > startSentenceIndex {
-                    break
-                }
-                chunkWordCount += nextWords
-                endSentenceIndex += 1
-                if chunkWordCount >= targetWords { break }
+        for sentence in sentences {
+            let sentenceWords = sentence.split(whereSeparator: \.isWhitespace).count
+            if currentWordCount + sentenceWords > targetWords && !currentSentences.isEmpty {
+                let chunkText = currentSentences.joined(separator: " ")
+                chunks.append(TextChunk(text: chunkText, index: chunks.count, wordCount: currentWordCount))
+                currentSentences.removeAll()
+                currentWordCount = 0
             }
 
             let selected = rawSentences[startSentenceIndex..<endSentenceIndex]

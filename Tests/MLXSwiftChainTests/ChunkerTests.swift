@@ -56,6 +56,15 @@ struct ChunkerTests {
         #expect(chunks[0].wordCount == 2)
     }
 
+    @Test("FixedSizeChunker handles mixed whitespace")
+    func fixedSize_mixedWhitespace() {
+        let chunker = FixedSizeChunker(maxWords: 2)
+        let chunks = chunker.chunk("one\t two\nthree")
+        #expect(chunks.count == 2)
+        #expect(chunks[0].text == "one two")
+        #expect(chunks[1].text == "three")
+    }
+
     @Test("FixedSizeChunker scales linearly")
     func fixedSize_scaling() {
         let chunker = FixedSizeChunker(maxWords: 500)
@@ -102,7 +111,7 @@ struct ChunkerTests {
     @Test("SentenceAwareChunker handles text without sentence punctuation")
     func sentenceAware_noPunctuation() {
         let chunker = SentenceAwareChunker(targetWords: 3)
-        let text = "one two three four five six"
+        let text = "one\ttwo\nthree four five six"
         let chunks = chunker.chunk(text)
         #expect(!chunks.isEmpty)
     }
