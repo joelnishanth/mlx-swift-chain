@@ -1,5 +1,7 @@
 # mlx-swift-chain
 
+[![CI](https://github.com/joelnishanth/mlx-swift-chain/actions/workflows/ci.yml/badge.svg)](https://github.com/joelnishanth/mlx-swift-chain/actions/workflows/ci.yml)
+
 Document processing chains for [MLX Swift](https://github.com/ml-explore/mlx-swift). Process documents that exceed your model's context window using map-reduce, stuff, and adaptive chain strategies — built for local inference on Apple Silicon.
 
 ## The Problem
@@ -54,7 +56,7 @@ class MyModelService: LLMBackend {
 ```swift
 let chain = AdaptiveChain(
     backend: myModelService,
-    contextBudgetWords: 1200
+    contextBudget: .tokens(4096)
 )
 
 // Summarize a long document
@@ -68,41 +70,46 @@ let summary = try await chain.run(
 
 For short texts, `AdaptiveChain` uses a single LLM call (zero overhead). For long texts, it automatically chunks the input, maps each chunk through the LLM, and reduces the results.
 
-### More Examples
+## More Examples
 
-**Extract key information from a research paper:**
+These examples show practical long-document workflows that are broadly useful in MLX sample apps.
+
+### Meeting summary
 
 ```swift
-let chain = AdaptiveChain(backend: model, contextBudgetWords: 1000)
+let chain = AdaptiveChain(backend: model, contextBudget: .words(1000))
 
-let findings = try await chain.run(
-    paper,
-    mapPrompt: "List the key findings and methodology from this section:\n\n",
-    reducePrompt: "Consolidate these findings into a structured overview:\n\n"
+let summary = try await chain.run(
+    transcript,
+    mapPrompt: "Summarize this meeting segment with decisions, blockers, and owners:\n\n",
+    reducePrompt: "Produce a concise full-meeting summary from these segment summaries:\n\n"
 )
 ```
 
-**Analyze a codebase or log file:**
+### Task extraction
 
 ```swift
-let chain = AdaptiveChain(backend: model, contextBudgetWords: 800)
-
-let analysis = try await chain.run(
-    logOutput,
-    mapPrompt: "Identify errors, warnings, and anomalies in this log section:\n\n",
-    reducePrompt: "Merge and deduplicate these issues into a prioritized list:\n\n"
-)
-```
-
-**Extract action items from any long-form text:**
-
-```swift
-let chain = AdaptiveChain(backend: model, contextBudgetWords: 900)
+let chain = AdaptiveChain(backend: model, contextBudget: .words(900))
 
 let tasks = try await chain.run(
-    notes,
-    mapPrompt: "Extract action items and to-dos from this section as JSON:\n\n",
-    reducePrompt: "Merge and deduplicate these action items into a single JSON array:\n\n"
+    transcript,
+    mapPrompt: "Extract action items with owner + due date in JSON:\n\n",
+    reducePrompt: "Merge these action items, deduplicate, and output JSON only:\n\n"
+)
+```
+
+### Key moments and timeline highlights
+
+```swift
+let chain = MapReduceChain(
+    backend: model,
+    chunker: SentenceAwareChunker(targetWords: 350, overlapSentences: 1)
+)
+
+let keyMoments = try await chain.run(
+    transcript,
+    mapPrompt: "Identify noteworthy moments and include timestamps when present:\n\n",
+    reducePrompt: "Combine the moments into a chronological highlight list:\n\n"
 )
 ```
 
@@ -118,8 +125,10 @@ let tasks = try await chain.run(
 
 | Chunker | Strategy |
 |---|---|
-| `FixedSizeChunker` | Splits at word boundaries, fixed chunk size. |
-| `SentenceAwareChunker` | Splits at sentence boundaries, respects target word count. **Default.** |
+| `FixedSizeChunker` | Splits at word boundaries with optional overlap. |
+| `SentenceAwareChunker` | Splits at sentence boundaries, optional sentence overlap. **Default.** |
+
+Chunk metadata preserves chunk index, source word ranges, discovered timestamps, and speaker labels to reduce context loss around boundaries.
 
 ## Progress Reporting
 

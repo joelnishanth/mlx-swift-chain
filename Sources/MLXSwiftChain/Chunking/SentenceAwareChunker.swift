@@ -3,37 +3,67 @@ import Foundation
 /// Splits text into chunks that respect sentence boundaries.
 /// Accumulates complete sentences until approaching `targetWords`,
 /// then starts a new chunk at the next sentence boundary.
+/// Optionally keeps sentence overlap between adjacent chunks.
 public struct SentenceAwareChunker: TextChunker {
     public let targetWords: Int
+    public let overlapSentences: Int
 
-    public init(targetWords: Int = 1500) {
+    public init(targetWords: Int = 1500, overlapSentences: Int = 0) {
         self.targetWords = max(1, targetWords)
+        self.overlapSentences = max(0, overlapSentences)
     }
 
     public func chunk(_ text: String) -> [TextChunk] {
-        let sentences = splitSentences(text)
-        guard !sentences.isEmpty else { return [] }
+        let rawSentences = splitSentences(text)
+        guard !rawSentences.isEmpty else { return [] }
+
+        let sentenceWords = rawSentences.map { $0.split(whereSeparator: \.isWhitespace).count }
+        var sentenceStartWordOffsets: [Int] = []
+        sentenceStartWordOffsets.reserveCapacity(rawSentences.count)
+
+        var rollingOffset = 0
+        for words in sentenceWords {
+            sentenceStartWordOffsets.append(rollingOffset)
+            rollingOffset += words
+        }
 
         var chunks: [TextChunk] = []
-        var currentSentences: [String] = []
-        var currentWordCount = 0
+        var sentenceIndex = 0
 
-        for sentence in sentences {
-            let sentenceWords = sentence.split(separator: " ").count
-            if currentWordCount + sentenceWords > targetWords && !currentSentences.isEmpty {
-                let chunkText = currentSentences.joined(separator: " ")
-                chunks.append(TextChunk(text: chunkText, index: chunks.count, wordCount: currentWordCount))
-                currentSentences.removeAll()
-                currentWordCount = 0
+        while sentenceIndex < rawSentences.count {
+            let startSentenceIndex = sentenceIndex
+            var endSentenceIndex = sentenceIndex
+            var chunkWordCount = 0
+
+            while endSentenceIndex < rawSentences.count {
+                let nextWords = sentenceWords[endSentenceIndex]
+                if chunkWordCount + nextWords > targetWords, endSentenceIndex > startSentenceIndex {
+                    break
+                }
+                chunkWordCount += nextWords
+                endSentenceIndex += 1
+                if chunkWordCount >= targetWords { break }
             }
-            currentSentences.append(sentence)
-            currentWordCount += sentenceWords
+
+            let selected = rawSentences[startSentenceIndex..<endSentenceIndex]
+            let chunkText = selected.joined(separator: " ")
+            let startWord = sentenceStartWordOffsets[startSentenceIndex]
+            let endWord = startWord + chunkWordCount
+            let index = chunks.count
+
+            let metadata = TextChunkMetadata(
+                chunkIndex: index,
+                sourceWordRange: startWord..<endWord,
+                timestamps: extractTimestamps(from: chunkText),
+                speakerLabels: extractSpeakerLabels(from: chunkText)
+            )
+            chunks.append(TextChunk(text: chunkText, index: index, wordCount: chunkWordCount, metadata: metadata))
+
+            if endSentenceIndex >= rawSentences.count { break }
+            let rewind = min(overlapSentences, max(0, endSentenceIndex - startSentenceIndex - 1))
+            sentenceIndex = max(startSentenceIndex + 1, endSentenceIndex - rewind)
         }
 
-        if !currentSentences.isEmpty {
-            let chunkText = currentSentences.joined(separator: " ")
-            chunks.append(TextChunk(text: chunkText, index: chunks.count, wordCount: currentWordCount))
-        }
         return chunks
     }
 
@@ -48,5 +78,22 @@ public struct SentenceAwareChunker: TextChunker {
             sentences.append(text.trimmingCharacters(in: .whitespacesAndNewlines))
         }
         return sentences
+    }
+
+    private func extractTimestamps(from text: String) -> [String] {
+        let pattern = #"\b\d{1,2}:\d{2}(?::\d{2})?\b"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        return regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
+            Range($0.range, in: text).map { String(text[$0]) }
+        }
+    }
+
+    private func extractSpeakerLabels(from text: String) -> [String] {
+        let pattern = #"(?m)^\s*([A-Za-z][A-Za-z\s]{0,30}):"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let labels = regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
+            Range($0.range(at: 1), in: text).map { String(text[$0]).trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+        return Array(Set(labels)).sorted()
     }
 }

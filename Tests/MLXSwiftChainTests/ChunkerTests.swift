@@ -18,6 +18,29 @@ struct ChunkerTests {
         #expect(chunks[2].index == 2)
     }
 
+    @Test("FixedSizeChunker supports overlap")
+    func fixedSize_overlap() {
+        let chunker = FixedSizeChunker(maxWords: 4, overlapWords: 1)
+        let chunks = chunker.chunk("one two three four five six seven")
+        #expect(chunks.count == 3)
+        #expect(chunks[0].text == "one two three four")
+        #expect(chunks[1].text == "four five six seven")
+        #expect(chunks[2].text == "seven")
+    }
+
+    @Test("FixedSizeChunker preserves metadata")
+    func fixedSize_metadata() {
+        let chunker = FixedSizeChunker(maxWords: 6)
+        let text = "00:05 Alex: project kickoff now underway with updates"
+        let chunks = chunker.chunk(text)
+
+        #expect(chunks.count == 2)
+        #expect(chunks[0].metadata.chunkIndex == 0)
+        #expect(chunks[0].metadata.sourceWordRange == 0..<6)
+        #expect(chunks[0].metadata.timestamps.contains("00:05"))
+        #expect(chunks[0].metadata.speakerLabels.contains("Alex"))
+    }
+
     @Test("FixedSizeChunker returns empty for empty input")
     func fixedSize_empty() {
         let chunker = FixedSizeChunker(maxWords: 100)
@@ -56,6 +79,17 @@ struct ChunkerTests {
             let trimmed = chunk.text.trimmingCharacters(in: .whitespacesAndNewlines)
             #expect(!trimmed.isEmpty)
         }
+    }
+
+    @Test("SentenceAwareChunker supports sentence overlap")
+    func sentenceAware_overlap() {
+        let chunker = SentenceAwareChunker(targetWords: 4, overlapSentences: 1)
+        let text = "One two. Three four. Five six. Seven eight."
+        let chunks = chunker.chunk(text)
+        #expect(chunks.count >= 3)
+        #expect(chunks[0].text.contains("One two."))
+        #expect(chunks[1].text.contains("Three four."))
+        #expect(chunks[1].text.contains("Five six."))
     }
 
     @Test("SentenceAwareChunker returns single chunk for short text")
