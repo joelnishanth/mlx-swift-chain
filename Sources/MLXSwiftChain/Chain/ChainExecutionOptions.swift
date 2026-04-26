@@ -26,17 +26,23 @@ public struct ChainExecutionOptions: Sendable, Equatable {
     /// the original chunk order.
     public var preserveOrder: Bool
 
+    /// Retry policy for failed map and reduce LLM calls.
+    /// Default is `.none` (no retry), suitable for on-device inference.
+    public var retryPolicy: RetryPolicy
+
     public init(
         reservedOutputTokens: Int = 0,
         maxReduceGroupSize: Int = 8,
         maxReduceDepth: Int = 5,
         maxConcurrentMapTasks: Int = 1,
-        preserveOrder: Bool = true
+        preserveOrder: Bool = true,
+        retryPolicy: RetryPolicy = .none
     ) {
         self.reservedOutputTokens = reservedOutputTokens
         self.maxReduceGroupSize = maxReduceGroupSize
         self.maxReduceDepth = maxReduceDepth
         self.maxConcurrentMapTasks = max(1, maxConcurrentMapTasks)
         self.preserveOrder = preserveOrder
+        self.retryPolicy = retryPolicy
     }
 }

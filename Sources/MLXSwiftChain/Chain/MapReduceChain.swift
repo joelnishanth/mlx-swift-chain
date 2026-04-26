@@ -64,6 +64,7 @@ public struct MapReduceChain: DocumentChain {
                 chunks: chunks,
                 mapPrompt: mapPrompt,
                 systemPrompt: systemPrompt,
+                options: options,
                 progress: progress,
                 start: start
             )
@@ -95,6 +96,7 @@ public struct MapReduceChain: DocumentChain {
         chunks: [TextChunk],
         mapPrompt: String,
         systemPrompt: String?,
+        options: ChainExecutionOptions,
         progress: ChainProgress?,
         start: ContinuousClock.Instant
     ) async throws -> [String] {
@@ -107,7 +109,9 @@ public struct MapReduceChain: DocumentChain {
             progress?.report(ChainProgress.Update(phase: .mapping(step: i + 1, of: chunks.count), elapsedTime: elapsed))
 
             let prompt = mapPrompt + chunk.text
-            let result = try await backend.generate(prompt: prompt, systemPrompt: systemPrompt)
+            let result = try await withRetry(policy: options.retryPolicy) {
+                try await self.backend.generate(prompt: prompt, systemPrompt: systemPrompt)
+            }
             results.append(result)
         }
         return results
@@ -135,7 +139,9 @@ public struct MapReduceChain: DocumentChain {
                     let prompt = mapPrompt + chunk.text
                     group.addTask {
                         try Task.checkCancellation()
-                        let result = try await self.backend.generate(prompt: prompt, systemPrompt: systemPrompt)
+                        let result = try await withRetry(policy: options.retryPolicy) {
+                            try await self.backend.generate(prompt: prompt, systemPrompt: systemPrompt)
+                        }
                         return (idx, result)
                     }
                     inFlight += 1
@@ -176,7 +182,9 @@ public struct MapReduceChain: DocumentChain {
             try Task.checkCancellation()
             let elapsed = ContinuousClock.now - start
             progress?.report(ChainProgress.Update(phase: .reducing, elapsedTime: elapsed))
-            return try await backend.generate(prompt: reduceInput, systemPrompt: systemPrompt)
+            return try await withRetry(policy: options.retryPolicy) {
+                try await self.backend.generate(prompt: reduceInput, systemPrompt: systemPrompt)
+            }
         }
 
         let groupSize = max(2, options.maxReduceGroupSize)
@@ -194,7 +202,9 @@ public struct MapReduceChain: DocumentChain {
 
             let groupCombined = formatSummaries(group)
             let groupPrompt = reducePrompt + groupCombined
-            let groupResult = try await backend.generate(prompt: groupPrompt, systemPrompt: systemPrompt)
+            let groupResult = try await withRetry(policy: options.retryPolicy) {
+                try await self.backend.generate(prompt: groupPrompt, systemPrompt: systemPrompt)
+            }
 
             let firstChunkLabel = extractChunkRange(from: group.first ?? "")
             let lastChunkLabel = extractChunkRange(from: group.last ?? "")
