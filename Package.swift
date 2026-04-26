@@ -8,7 +8,7 @@ let package = Package(
         .library(name: "MLXSwiftChain", targets: ["MLXSwiftChain"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", from: "2.31.2"),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", from: "2.31.1"),
     ],
     targets: [
         .target(
