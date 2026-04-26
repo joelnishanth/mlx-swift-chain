@@ -1,5 +1,7 @@
 # mlx-swift-chain
 
+[![CI](https://github.com/joelnishanth/mlx-swift-chain/actions/workflows/ci.yml/badge.svg)](https://github.com/joelnishanth/mlx-swift-chain/actions/workflows/ci.yml)
+
 Document processing chains for [MLX Swift](https://github.com/ml-explore/mlx-swift). Process documents that exceed your model's context window using map-reduce, stuff, and adaptive chain strategies — built for local inference on Apple Silicon.
 
 ## The Problem
@@ -54,7 +56,7 @@ class MyModelService: LLMBackend {
 ```swift
 let chain = AdaptiveChain(
     backend: myModelService,
-    contextBudgetWords: 1200
+    contextBudget: .tokens(4096)
 )
 
 // Summarize a long document
@@ -68,12 +70,12 @@ let summary = try await chain.run(
 
 For short texts, `AdaptiveChain` uses a single LLM call (zero overhead). For long texts, it automatically chunks the input, maps each chunk through the LLM, and reduces the results.
 
-### More Examples
+## More Examples
 
 **Extract key information from a research paper:**
 
 ```swift
-let chain = AdaptiveChain(backend: model, contextBudgetWords: 1000)
+let chain = AdaptiveChain(backend: model, contextBudget: .words(1000))
 
 let findings = try await chain.run(
     paper,
@@ -85,7 +87,7 @@ let findings = try await chain.run(
 **Analyze a codebase or log file:**
 
 ```swift
-let chain = AdaptiveChain(backend: model, contextBudgetWords: 800)
+let chain = AdaptiveChain(backend: model, contextBudget: .words(800))
 
 let analysis = try await chain.run(
     logOutput,
@@ -94,14 +96,17 @@ let analysis = try await chain.run(
 )
 ```
 
-**Extract action items from any long-form text:**
+**Extract action items from long-form text:**
 
 ```swift
-let chain = AdaptiveChain(backend: model, contextBudgetWords: 900)
+let chain = MapReduceChain(
+    backend: model,
+    chunker: SentenceAwareChunker(targetWords: 350, overlapSentences: 1)
+)
 
 let tasks = try await chain.run(
     notes,
-    mapPrompt: "Extract action items and to-dos from this section as JSON:\n\n",
+    mapPrompt: "Extract action items and time-relevant events from this section as JSON:\n\n",
     reducePrompt: "Merge and deduplicate these action items into a single JSON array:\n\n"
 )
 ```
@@ -118,8 +123,10 @@ let tasks = try await chain.run(
 
 | Chunker | Strategy |
 |---|---|
-| `FixedSizeChunker` | Splits at word boundaries, fixed chunk size. |
-| `SentenceAwareChunker` | Splits at sentence boundaries, respects target word count. **Default.** |
+| `FixedSizeChunker` | Splits at word boundaries with optional overlap. |
+| `SentenceAwareChunker` | Splits at sentence boundaries, optional sentence overlap. **Default.** |
+
+Chunk metadata preserves chunk index, source word ranges, discovered timestamps, and speaker labels to reduce context loss around boundaries.
 
 ## Progress Reporting
 

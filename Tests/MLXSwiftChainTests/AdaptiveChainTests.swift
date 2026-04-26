@@ -92,4 +92,17 @@ struct AdaptiveChainTests {
         #expect(allPrompts.contains("MARKER_75"))
         #expect(allPrompts.contains("MARKER_END"))
     }
+
+    @Test("AdaptiveChain supports token-oriented budget strategy")
+    func adaptive_tokenBudget() async throws {
+        let mock = MockLLMBackend()
+        mock.cannedResponse = "result"
+        let chain = AdaptiveChain(backend: mock, contextBudget: .tokens(8, estimatedTokensPerWord: 1.0))
+
+        let text = "one two three four five six seven eight nine"
+        _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
+
+        #expect(mock.generateCallCount > 1)
+    }
+
 }
