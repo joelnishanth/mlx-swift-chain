@@ -88,7 +88,7 @@ public struct SentenceAwareChunker: TextChunker {
     }
 
     private func extractSpeakerLabels(from text: String) -> [String] {
-        let pattern = #"(?m)^\s*([A-Za-z][A-Za-z\s]{0,30}):"#
+        let pattern = #"(?m)^\s*(?:\d{1,2}:\d{2}(?::\d{2})?\s+)?([A-Za-z][A-Za-z\s]{0,30}):"#
         guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
         let labels = regex.matches(in: text, range: NSRange(text.startIndex..., in: text)).compactMap {
             Range($0.range(at: 1), in: text).map { String(text[$0]).trimmingCharacters(in: .whitespacesAndNewlines) }
