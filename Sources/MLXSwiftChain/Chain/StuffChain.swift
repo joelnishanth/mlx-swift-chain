@@ -13,14 +13,17 @@ public struct StuffChain: DocumentChain {
         _ text: String,
         mapPrompt: String,
         reducePrompt: String,
+        stuffPrompt: String?,
         systemPrompt: String?,
+        options: ChainExecutionOptions,
         progress: ChainProgress?
     ) async throws -> String {
         let start = ContinuousClock.now
         defer { progress?.finish() }
         progress?.report(ChainProgress.Update(phase: .stuffing, elapsedTime: .zero))
 
-        let prompt = reducePrompt + text
+        let taskPrompt = stuffPrompt ?? reducePrompt
+        let prompt = taskPrompt + text
         let result = try await backend.generate(prompt: prompt, systemPrompt: systemPrompt)
 
         let elapsed = ContinuousClock.now - start

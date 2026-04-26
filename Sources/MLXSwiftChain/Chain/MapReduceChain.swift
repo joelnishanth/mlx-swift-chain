@@ -16,7 +16,9 @@ public struct MapReduceChain: DocumentChain {
         _ text: String,
         mapPrompt: String,
         reducePrompt: String,
+        stuffPrompt: String?,
         systemPrompt: String?,
+        options: ChainExecutionOptions,
         progress: ChainProgress?
     ) async throws -> String {
         let start = ContinuousClock.now
@@ -29,7 +31,6 @@ public struct MapReduceChain: DocumentChain {
             return ""
         }
 
-        // Map phase: process each chunk individually
         var chunkResults: [String] = []
         chunkResults.reserveCapacity(chunks.count)
 
@@ -42,7 +43,6 @@ public struct MapReduceChain: DocumentChain {
             chunkResults.append(result)
         }
 
-        // Reduce phase: combine all chunk results
         let reduceElapsed = ContinuousClock.now - start
         progress?.report(ChainProgress.Update(phase: .reducing, elapsedTime: reduceElapsed))
 

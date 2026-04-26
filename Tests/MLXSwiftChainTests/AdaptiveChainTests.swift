@@ -34,7 +34,8 @@ struct AdaptiveChainTests {
     func adaptive_exactBoundary() async throws {
         let mock = MockLLMBackend()
         mock.cannedResponse = "result"
-        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 5)
+        // Budget must cover text + prompt overhead: 5 words text + 1 word "Reduce:" = 6
+        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 6)
 
         let text = "one two three four five"
         _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
@@ -58,7 +59,8 @@ struct AdaptiveChainTests {
     func adaptive_mixedWhitespaceCounting() async throws {
         let mock = MockLLMBackend()
         mock.cannedResponse = "result"
-        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 5)
+        // Budget must cover text + prompt: 5 words text + 1 word "Reduce:" = 6
+        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 6)
 
         let text = "one two\tthree\nfour five"
         _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
@@ -91,6 +93,58 @@ struct AdaptiveChainTests {
         #expect(allPrompts.contains("MARKER_50"))
         #expect(allPrompts.contains("MARKER_75"))
         #expect(allPrompts.contains("MARKER_END"))
+    }
+
+    @Test("AdaptiveChain routes to map-reduce when prompt overhead pushes over budget")
+    func adaptive_promptOverhead() async throws {
+        let mock = MockLLMBackend()
+        mock.cannedResponse = "result"
+        // 4 words of text fits in 5-word budget alone, but "Reduce:" adds 1 word = 5 total = budget
+        // A longer prompt pushes it over
+        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 5)
+
+        let text = "one two three four"
+        _ = try await chain.run(
+            text, mapPrompt: "Map this section: ",
+            reducePrompt: "Combine these results: "
+        )
+
+        #expect(mock.generateCallCount > 1, "Prompt overhead should push text over budget to map-reduce")
+    }
+
+    @Test("AdaptiveChain uses stuffPrompt when provided")
+    func adaptive_stuffPrompt() async throws {
+        let mock = MockLLMBackend()
+        mock.cannedResponse = "stuffed"
+        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 100)
+
+        let text = "short text"
+        let result = try await chain.run(
+            text, mapPrompt: "Map: ", reducePrompt: "Reduce: ",
+            stuffPrompt: "StuffOverride: ", systemPrompt: nil,
+            options: ChainExecutionOptions(), progress: nil
+        )
+
+        #expect(result == "stuffed")
+        #expect(mock.generateCallCount == 1)
+        #expect(mock.promptsReceived[0].hasPrefix("StuffOverride: "), "StuffChain should use stuffPrompt")
+    }
+
+    @Test("AdaptiveChain accounts for reservedOutputTokens in budget")
+    func adaptive_reservedOutput() async throws {
+        let mock = MockLLMBackend()
+        mock.cannedResponse = "result"
+        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 20)
+
+        let text = "one two three four five six seven eight nine ten"
+        // 10 words text + 1 word prompt + ~7 reserved (10 tokens / 1.33) = 18 fits in 20
+        let fitsOptions = ChainExecutionOptions(reservedOutputTokens: 10)
+        _ = try await chain.run(
+            text, mapPrompt: "", reducePrompt: "R: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: fitsOptions, progress: nil
+        )
+        #expect(mock.generateCallCount == 1, "Should fit with small reserved output")
     }
 
     @Test("AdaptiveChain supports token-oriented budget strategy")
