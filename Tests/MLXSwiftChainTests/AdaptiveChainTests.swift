@@ -159,4 +159,30 @@ struct AdaptiveChainTests {
         #expect(mock.generateCallCount > 1)
     }
 
+    @Test("AdaptiveChain uses TokenAwareBackend for precise budgeting")
+    func adaptive_tokenAwareBackend() async throws {
+        // 1:1 token ratio, context window of 15 tokens
+        let mock = MockTokenAwareBackend(contextWindowTokens: 15, tokensPerWord: 1.0)
+        mock.cannedResponse = "result"
+        // Budget doesn't matter when backend provides context window
+        let chain = AdaptiveChain(backend: mock, contextBudget: .words(999))
+
+        // 10 words text + "Reduce:" 1 word = 11 tokens -> fits in 15
+        let text = "one two three four five six seven eight nine ten"
+        _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
+        #expect(mock.generateCallCount == 1, "Should stuff when text fits in TokenAwareBackend context window")
+    }
+
+    @Test("AdaptiveChain routes to map-reduce when TokenAwareBackend window is exceeded")
+    func adaptive_tokenAwareOverflow() async throws {
+        let mock = MockTokenAwareBackend(contextWindowTokens: 8, tokensPerWord: 1.0)
+        mock.cannedResponse = "result"
+        let chain = AdaptiveChain(backend: mock, contextBudget: .words(999))
+
+        // 10 words + 1 word prompt = 11 tokens > 8 window
+        let text = "one two three four five six seven eight nine ten"
+        _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
+        #expect(mock.generateCallCount > 1, "Should use map-reduce when exceeding TokenAwareBackend window")
+    }
+
 }

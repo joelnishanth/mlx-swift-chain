@@ -6,6 +6,9 @@ import Foundation
 ///
 /// - If total budget (prompt + text + reserved output) fits, uses StuffChain.
 /// - Otherwise, uses MapReduceChain to process in chunks.
+///
+/// When the backend conforms to `TokenAwareBackend`, budget checks use
+/// real token counts. Otherwise, word heuristics are used as a fallback.
 public struct AdaptiveChain: DocumentChain {
     public let backend: any LLMBackend
     public let chunker: any TextChunker
@@ -51,16 +54,14 @@ public struct AdaptiveChain: DocumentChain {
         options: ChainExecutionOptions,
         progress: ChainProgress?
     ) async throws -> String {
-        let textWordCount = text.split(whereSeparator: \.isWhitespace).count
-
+        let budgeter = PromptBudgeter(backend: backend, budget: contextBudget)
         let taskPrompt = stuffPrompt ?? reducePrompt
-        let promptOverheadWords = wordCount(taskPrompt) + wordCount(systemPrompt)
-        let reservedOutputWords = estimateWords(forTokens: options.reservedOutputTokens)
 
-        let fits = contextBudget.fitsInBudget(
-            textWords: textWordCount,
-            promptOverheadWords: promptOverheadWords,
-            reservedOutputWords: reservedOutputWords
+        let fits = budgeter.fits(
+            systemPrompt: systemPrompt,
+            taskPrompt: taskPrompt,
+            text: text,
+            reservedOutputTokens: options.reservedOutputTokens
         )
 
         if fits {
@@ -78,19 +79,5 @@ public struct AdaptiveChain: DocumentChain {
             stuffPrompt: stuffPrompt, systemPrompt: systemPrompt,
             options: options, progress: progress
         )
-    }
-
-    private func wordCount(_ text: String?) -> Int {
-        guard let text, !text.isEmpty else { return 0 }
-        return text.split(whereSeparator: \.isWhitespace).count
-    }
-
-    private func estimateWords(forTokens tokens: Int) -> Int {
-        switch contextBudget {
-        case .words:
-            return Int(Double(tokens) / 1.33)
-        case .tokens(_, let ratio):
-            return Int(Double(tokens) / max(0.1, ratio))
-        }
     }
 }
