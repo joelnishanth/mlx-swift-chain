@@ -116,7 +116,7 @@ struct MapReduceChainTests {
             return true
         }
 
-        _ = try await chain.run("", mapPrompt: "Map: ", reducePrompt: "Reduce: ", progress: progress)
+        _ = try await chain.run("", mapPrompt: "Map: ", reducePrompt: "Reduce: ", systemPrompt: nil, progress: progress)
         let didComplete = await watcher.value
         #expect(didComplete)
     }
