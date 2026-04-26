@@ -17,6 +17,7 @@ public struct StuffChain: DocumentChain {
         progress: ChainProgress?
     ) async throws -> String {
         let start = ContinuousClock.now
+        defer { progress?.finish() }
         progress?.report(ChainProgress.Update(phase: .stuffing, elapsedTime: .zero))
 
         let prompt = reducePrompt + text
@@ -24,7 +25,6 @@ public struct StuffChain: DocumentChain {
 
         let elapsed = ContinuousClock.now - start
         progress?.report(ChainProgress.Update(phase: .complete, elapsedTime: elapsed))
-        progress?.finish()
         return result
     }
 }

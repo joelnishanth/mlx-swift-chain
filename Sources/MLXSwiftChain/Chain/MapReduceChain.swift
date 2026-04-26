@@ -20,9 +20,14 @@ public struct MapReduceChain: DocumentChain {
         progress: ChainProgress?
     ) async throws -> String {
         let start = ContinuousClock.now
+        defer { progress?.finish() }
+
         let chunks = chunker.chunk(text)
 
-        guard !chunks.isEmpty else { return "" }
+        guard !chunks.isEmpty else {
+            progress?.report(ChainProgress.Update(phase: .complete, elapsedTime: .zero))
+            return ""
+        }
 
         // Map phase: process each chunk individually
         var chunkResults: [String] = []
@@ -50,7 +55,6 @@ public struct MapReduceChain: DocumentChain {
 
         let totalElapsed = ContinuousClock.now - start
         progress?.report(ChainProgress.Update(phase: .complete, elapsedTime: totalElapsed))
-        progress?.finish()
         return finalResult
     }
 }
