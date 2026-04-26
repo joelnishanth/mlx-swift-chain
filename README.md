@@ -2,7 +2,20 @@
 
 [![CI](https://github.com/joelnishanth/mlx-swift-chain/actions/workflows/ci.yml/badge.svg)](https://github.com/joelnishanth/mlx-swift-chain/actions/workflows/ci.yml)
 
-Document processing chains for [MLX Swift](https://github.com/ml-explore/mlx-swift). Process documents that exceed your model's context window using map-reduce, stuff, and adaptive chain strategies — built for local inference on Apple Silicon.
+**Swift-native long-document reasoning for private, on-device MLX apps.**
+
+Process documents that exceed your model's context window using map-reduce, stuff, and adaptive chain strategies — built for local inference on Apple Silicon.
+
+## How This Fits
+
+[MLX Swift](https://github.com/ml-explore/mlx-swift) and [MLX Swift LM](https://github.com/ml-explore/mlx-swift-lm) handle model loading and inference. **mlx-swift-chain** handles everything above the model layer: chunking, token/context budgeting, map-reduce orchestration, hierarchical reduce, progress reporting, and source-aware long-document outputs. This is not a full RAG framework or LangChain clone — it solves one problem well: reasoning over documents that don't fit in a single context window.
+
+## Target Use Cases
+
+- **Meeting transcript summarization** — speaker-aware chunking preserves who said what
+- **Markdown / PDF document summarization** — heading-aware chunking respects document structure
+- **Xcode and simulator log analysis** — stack-trace-aware chunking keeps crash reports intact
+- **Offline field manuals / emergency docs** — process long reference material entirely on-device
 
 ## The Problem
 
@@ -61,7 +74,6 @@ let chain = AdaptiveChain(
     contextBudget: .tokens(4096)
 )
 
-// Summarize a long document
 let summary = try await chain.run(
     document,
     mapPrompt: "Summarize this section concisely:\n\n",
