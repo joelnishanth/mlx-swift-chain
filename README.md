@@ -72,33 +72,31 @@ For short texts, `AdaptiveChain` uses a single LLM call (zero overhead). For lon
 
 ## More Examples
 
-These examples show practical long-document workflows that are broadly useful in MLX sample apps.
-
-### Meeting summary
+**Extract key information from a research paper:**
 
 ```swift
 let chain = AdaptiveChain(backend: model, contextBudget: .words(1000))
 
-let summary = try await chain.run(
-    transcript,
-    mapPrompt: "Summarize this meeting segment with decisions, blockers, and owners:\n\n",
-    reducePrompt: "Produce a concise full-meeting summary from these segment summaries:\n\n"
+let findings = try await chain.run(
+    paper,
+    mapPrompt: "List the key findings and methodology from this section:\n\n",
+    reducePrompt: "Consolidate these findings into a structured overview:\n\n"
 )
 ```
 
-### Task extraction
+**Analyze a codebase or log file:**
 
 ```swift
-let chain = AdaptiveChain(backend: model, contextBudget: .words(900))
+let chain = AdaptiveChain(backend: model, contextBudget: .words(800))
 
-let tasks = try await chain.run(
-    transcript,
-    mapPrompt: "Extract action items with owner + due date in JSON:\n\n",
-    reducePrompt: "Merge these action items, deduplicate, and output JSON only:\n\n"
+let analysis = try await chain.run(
+    logOutput,
+    mapPrompt: "Identify errors, warnings, and anomalies in this log section:\n\n",
+    reducePrompt: "Merge and deduplicate these issues into a prioritized list:\n\n"
 )
 ```
 
-### Key moments and timeline highlights
+**Extract action items from long-form text:**
 
 ```swift
 let chain = MapReduceChain(
@@ -106,10 +104,10 @@ let chain = MapReduceChain(
     chunker: SentenceAwareChunker(targetWords: 350, overlapSentences: 1)
 )
 
-let keyMoments = try await chain.run(
-    transcript,
-    mapPrompt: "Identify noteworthy moments and include timestamps when present:\n\n",
-    reducePrompt: "Combine the moments into a chronological highlight list:\n\n"
+let tasks = try await chain.run(
+    notes,
+    mapPrompt: "Extract action items and time-relevant events from this section as JSON:\n\n",
+    reducePrompt: "Merge and deduplicate these action items into a single JSON array:\n\n"
 )
 ```
 
