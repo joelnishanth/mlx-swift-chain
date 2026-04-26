@@ -1,3 +1,4 @@
+import Foundation
 import Testing
 @testable import MLXSwiftChain
 
@@ -53,24 +54,27 @@ struct RetryTests {
     }
 }
 
-/// Backend that fails a configurable number of times, then succeeds.
+/// Thread-safe backend that fails a configurable number of times, then succeeds.
 final class TransientFailBackend: LLMBackend, @unchecked Sendable {
     enum TransientError: Error {
         case transient
     }
 
-    private var failCount: Int
-    private var callCount = 0
+    private let lock = NSLock()
+    private let failCount: Int
+    private var _callCount = 0
 
     init(failCount: Int) {
         self.failCount = failCount
     }
 
     func generate(prompt: String, systemPrompt: String?) async throws -> String {
-        callCount += 1
-        if callCount <= failCount {
-            throw TransientError.transient
+        try lock.withLock {
+            _callCount += 1
+            if _callCount <= failCount {
+                throw TransientError.transient
+            }
+            return "recovered response"
         }
-        return "recovered response"
     }
 }

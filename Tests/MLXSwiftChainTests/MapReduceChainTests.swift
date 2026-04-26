@@ -206,7 +206,6 @@ struct MapReduceChainTests {
     @Test("MapReduceChain concurrent map returns results in order")
     func mapReduce_concurrentMap() async throws {
         let mock = MockLLMBackend()
-        var callIndex = 0
         mock.cannedResponse = "result"
 
         let chunker = FixedSizeChunker(maxWords: 3)
