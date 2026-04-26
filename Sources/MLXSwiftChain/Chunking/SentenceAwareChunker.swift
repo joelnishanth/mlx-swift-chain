@@ -19,7 +19,7 @@ public struct SentenceAwareChunker: TextChunker {
         var currentWordCount = 0
 
         for sentence in sentences {
-            let sentenceWords = sentence.split(separator: " ").count
+            let sentenceWords = sentence.split(whereSeparator: \.isWhitespace).count
             if currentWordCount + sentenceWords > targetWords && !currentSentences.isEmpty {
                 let chunkText = currentSentences.joined(separator: " ")
                 chunks.append(TextChunk(text: chunkText, index: chunks.count, wordCount: currentWordCount))

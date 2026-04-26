@@ -103,4 +103,21 @@ struct MapReduceChainTests {
         #expect(phases.contains(.reducing))
         #expect(phases.contains(.complete))
     }
+
+    @Test("MapReduceChain finishes progress stream for empty input")
+    func mapReduce_emptyInput_finishesProgress() async throws {
+        let mock = MockLLMBackend()
+        let chunker = FixedSizeChunker(maxWords: 100)
+        let chain = MapReduceChain(backend: mock, chunker: chunker)
+        let progress = ChainProgress()
+
+        let watcher = Task {
+            for await _ in progress.updates {}
+            return true
+        }
+
+        _ = try await chain.run("", mapPrompt: "Map: ", reducePrompt: "Reduce: ", progress: progress)
+        let didComplete = await watcher.value
+        #expect(didComplete)
+    }
 }

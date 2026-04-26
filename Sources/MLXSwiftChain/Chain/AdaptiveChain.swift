@@ -32,7 +32,7 @@ public struct AdaptiveChain: DocumentChain {
         systemPrompt: String?,
         progress: ChainProgress?
     ) async throws -> String {
-        let wordCount = text.split(separator: " ").count
+        let wordCount = text.split(whereSeparator: \.isWhitespace).count
 
         if wordCount <= contextBudgetWords {
             let stuff = StuffChain(backend: backend)

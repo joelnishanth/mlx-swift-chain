@@ -9,7 +9,7 @@ public struct FixedSizeChunker: TextChunker {
     }
 
     public func chunk(_ text: String) -> [TextChunk] {
-        let words = text.split(separator: " ")
+        let words = text.split(whereSeparator: \.isWhitespace)
         guard !words.isEmpty else { return [] }
 
         var chunks: [TextChunk] = []

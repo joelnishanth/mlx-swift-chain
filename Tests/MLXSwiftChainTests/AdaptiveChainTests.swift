@@ -54,6 +54,18 @@ struct AdaptiveChainTests {
         #expect(mock.generateCallCount > 1, "Text over budget should use MapReduceChain")
     }
 
+    @Test("AdaptiveChain counts words across mixed whitespace")
+    func adaptive_mixedWhitespaceCounting() async throws {
+        let mock = MockLLMBackend()
+        mock.cannedResponse = "result"
+        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 5)
+
+        let text = "one two\tthree\nfour five"
+        _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
+
+        #expect(mock.generateCallCount == 1, "Whitespace variations should still count as 5 words")
+    }
+
     @Test("AdaptiveChain preserves full coverage on large text")
     func adaptive_fullCoverage() async throws {
         let mock = MockLLMBackend()
