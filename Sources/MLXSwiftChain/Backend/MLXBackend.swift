@@ -1,4 +1,5 @@
 import Foundation
+#if canImport(MLXLMCommon)
 import MLXLMCommon
 
 /// LLMBackend backed by an MLX `ModelContainer`.
@@ -15,3 +16,4 @@ public final class MLXBackend: LLMBackend, @unchecked Sendable {
         return try await session.respond(to: prompt)
     }
 }
+#endif

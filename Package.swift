@@ -7,15 +7,11 @@ let package = Package(
     products: [
         .library(name: "MLXSwiftChain", targets: ["MLXSwiftChain"]),
     ],
-    dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", from: "3.31.3"),
-    ],
+    dependencies: [],
     targets: [
         .target(
             name: "MLXSwiftChain",
-            dependencies: [
-                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
-            ]
+            dependencies: []
         ),
         .testTarget(
             name: "MLXSwiftChainTests",

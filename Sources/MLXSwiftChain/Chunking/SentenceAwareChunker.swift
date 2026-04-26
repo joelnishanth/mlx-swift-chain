@@ -67,16 +67,23 @@ public struct SentenceAwareChunker: TextChunker {
     }
 
     private func splitSentences(_ text: String) -> [String] {
-        var sentences: [String] = []
-        text.enumerateSubstrings(in: text.startIndex..., options: [.bySentences, .localized]) { substring, _, _, _ in
-            if let s = substring?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
-                sentences.append(s)
-            }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+
+        let pattern = #".+?(?:[.!?]+(?:\s+|$)|$)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern, options: [.dotMatchesLineSeparators]) else {
+            return [trimmed]
         }
-        if sentences.isEmpty && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            sentences.append(text.trimmingCharacters(in: .whitespacesAndNewlines))
+
+        let nsRange = NSRange(trimmed.startIndex..., in: trimmed)
+        let matches = regex.matches(in: trimmed, options: [], range: nsRange)
+        let sentences = matches.compactMap { match -> String? in
+            guard let range = Range(match.range, in: trimmed) else { return nil }
+            let sentence = trimmed[range].trimmingCharacters(in: .whitespacesAndNewlines)
+            return sentence.isEmpty ? nil : sentence
         }
-        return sentences
+
+        return sentences.isEmpty ? [trimmed] : sentences
     }
 
     private func extractTimestamps(from text: String) -> [String] {
