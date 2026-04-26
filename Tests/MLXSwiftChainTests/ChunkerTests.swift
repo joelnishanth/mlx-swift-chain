@@ -133,4 +133,197 @@ struct ChunkerTests {
             #expect(reassembled.contains(word), "Missing word: \(word)")
         }
     }
+
+    // MARK: - TranscriptChunker
+
+    @Test("TranscriptChunker preserves speaker labels")
+    func transcript_speakerLabels() {
+        let chunker = TranscriptChunker(targetWords: 20)
+        let text = """
+        00:05 Alice: Welcome everyone to the meeting.
+        00:10 Bob: Thanks Alice, let's get started with the agenda.
+        00:15 Alice: First item is the quarterly review.
+        """
+        let chunks = chunker.chunk(text)
+        #expect(!chunks.isEmpty)
+        let allSpeakers = chunks.flatMap(\.metadata.speakerLabels)
+        #expect(allSpeakers.contains("Alice"))
+        #expect(allSpeakers.contains("Bob"))
+    }
+
+    @Test("TranscriptChunker splits at speaker turns")
+    func transcript_splitAtTurns() {
+        let chunker = TranscriptChunker(targetWords: 10)
+        let text = """
+        Alice: First turn with several words to fill up space here.
+        Bob: Second turn also has several words to fill space here too.
+        Carol: Third turn continues with more words filling space nicely.
+        """
+        let chunks = chunker.chunk(text)
+        #expect(chunks.count >= 2, "Should split across speaker turns")
+        for chunk in chunks {
+            #expect(!chunk.text.isEmpty)
+        }
+    }
+
+    @Test("TranscriptChunker preserves timestamps")
+    func transcript_timestamps() {
+        let chunker = TranscriptChunker(targetWords: 1000)
+        let text = """
+        10:30 Alice: Good morning.
+        10:35 Bob: Morning, Alice.
+        """
+        let chunks = chunker.chunk(text)
+        #expect(chunks.count == 1)
+        let timestamps = chunks[0].metadata.timestamps
+        #expect(timestamps.contains("10:30"))
+        #expect(timestamps.contains("10:35"))
+    }
+
+    @Test("TranscriptChunker supports overlap turns")
+    func transcript_overlapTurns() {
+        let chunker = TranscriptChunker(targetWords: 8, overlapTurns: 1)
+        let text = """
+        Alice: First turn words here now.
+        Bob: Second turn words here now.
+        Carol: Third turn words here now.
+        """
+        let chunks = chunker.chunk(text)
+        #expect(chunks.count >= 2)
+        if chunks.count >= 2 {
+            #expect(chunks[1].text.contains("Bob") || chunks[1].text.contains("Alice"),
+                    "Overlap should include previous turn")
+        }
+    }
+
+    @Test("TranscriptChunker returns empty for empty input")
+    func transcript_empty() {
+        let chunker = TranscriptChunker(targetWords: 100)
+        let chunks = chunker.chunk("")
+        #expect(chunks.isEmpty)
+    }
+
+    // MARK: - MarkdownHeadingChunker
+
+    @Test("MarkdownHeadingChunker splits by headings")
+    func markdown_splitByHeadings() {
+        let chunker = MarkdownHeadingChunker(targetWords: 1000)
+        let text = """
+        # Introduction
+        This is the intro paragraph.
+
+        # Methods
+        This describes the methods used.
+
+        # Results
+        Here are the results.
+        """
+        let chunks = chunker.chunk(text)
+        #expect(chunks.count == 3)
+        #expect(chunks[0].text.contains("Introduction"))
+        #expect(chunks[1].text.contains("Methods"))
+        #expect(chunks[2].text.contains("Results"))
+    }
+
+    @Test("MarkdownHeadingChunker preserves heading text in chunks")
+    func markdown_preservesHeadings() {
+        let chunker = MarkdownHeadingChunker(targetWords: 1000)
+        let text = """
+        # Title
+        Some content here.
+        """
+        let chunks = chunker.chunk(text)
+        #expect(chunks.count == 1)
+        #expect(chunks[0].text.hasPrefix("# Title"))
+    }
+
+    @Test("MarkdownHeadingChunker falls back to sentence splitting for large sections")
+    func markdown_largeSectionFallback() {
+        let chunker = MarkdownHeadingChunker(targetWords: 10)
+        var longBody = (0..<50).map { "Word\($0)" }.joined(separator: " ")
+        let text = "# Big Section\n\n\(longBody)"
+        let chunks = chunker.chunk(text)
+        #expect(chunks.count > 1, "Large section should be sub-chunked")
+    }
+
+    @Test("MarkdownHeadingChunker returns empty for empty input")
+    func markdown_empty() {
+        let chunker = MarkdownHeadingChunker(targetWords: 100)
+        let chunks = chunker.chunk("")
+        #expect(chunks.isEmpty)
+    }
+
+    @Test("MarkdownHeadingChunker respects maxHeadingLevel")
+    func markdown_headingLevel() {
+        let chunker = MarkdownHeadingChunker(targetWords: 1000, maxHeadingLevel: 2)
+        let text = """
+        # H1
+        Content one.
+        ## H2
+        Content two.
+        ### H3 not a split point
+        Content three.
+        """
+        let chunks = chunker.chunk(text)
+        #expect(chunks.count == 2, "Only H1 and H2 should trigger splits")
+    }
+
+    // MARK: - LogChunker
+
+    @Test("LogChunker splits at timestamp boundaries")
+    func log_timestampBoundaries() {
+        let chunker = LogChunker(targetWords: 15)
+        let text = """
+        2024-01-15 10:30:00 INFO Starting application
+        2024-01-15 10:30:01 INFO Loading configuration
+        2024-01-15 10:30:02 INFO Ready to serve
+        2024-01-15 10:31:00 INFO Processing request one
+        2024-01-15 10:31:01 INFO Processing request two
+        """
+        let chunks = chunker.chunk(text)
+        #expect(chunks.count >= 2)
+        let allTimestamps = chunks.flatMap(\.metadata.timestamps)
+        #expect(allTimestamps.contains("2024-01-15 10:30:00"))
+    }
+
+    @Test("LogChunker keeps stack traces together")
+    func log_stackTraceIntact() {
+        let chunker = LogChunker(targetWords: 50)
+        let text = """
+        2024-01-15 10:30:00 INFO Starting up
+        2024-01-15 10:30:05 ERROR NullPointerException occurred
+        	at com.example.App.main(App.java:42)
+        	at com.example.App.init(App.java:10)
+        	at com.example.Bootstrap.run(Bootstrap.java:5)
+        2024-01-15 10:30:06 INFO Recovery attempted
+        """
+        let chunks = chunker.chunk(text)
+        let stackChunk = chunks.first { $0.text.contains("NullPointerException") }
+        #expect(stackChunk != nil)
+        if let sc = stackChunk {
+            #expect(sc.text.contains("App.java:42"), "Stack trace should not be split")
+            #expect(sc.text.contains("Bootstrap.java:5"), "Full stack should stay together")
+        }
+    }
+
+    @Test("LogChunker returns empty for empty input")
+    func log_empty() {
+        let chunker = LogChunker(targetWords: 100)
+        let chunks = chunker.chunk("")
+        #expect(chunks.isEmpty)
+    }
+
+    @Test("LogChunker extracts timestamps into metadata")
+    func log_extractsTimestamps() {
+        let chunker = LogChunker(targetWords: 1000)
+        let text = """
+        2024-01-15T10:30:00 INFO Event one
+        2024-01-15T10:31:00 INFO Event two
+        """
+        let chunks = chunker.chunk(text)
+        #expect(!chunks.isEmpty)
+        let timestamps = chunks.flatMap(\.metadata.timestamps)
+        #expect(timestamps.contains("2024-01-15T10:30:00"))
+        #expect(timestamps.contains("2024-01-15T10:31:00"))
+    }
 }
