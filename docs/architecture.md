@@ -26,9 +26,9 @@ graph TD
 
     subgraph app ["Your App"]
         MLXAdapter["YourModelService + LLMBackend"]
-        Service1["Summarization"]
-        Service2["Task Extraction"]
-        Service3["Key Moments"]
+        Service1["Summarization Service"]
+        Service2["Extraction Service"]
+        Service3["Analysis Service"]
     end
 
     MLXAdapter --> LLMBackend

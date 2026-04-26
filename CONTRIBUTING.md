@@ -19,7 +19,7 @@ Thanks for your interest in contributing! Here's how to get started.
 ## Areas for Contribution
 
 - **New chain strategies** (e.g. `RefineChain` — iterative refinement, `SlidingWindowChain`)
-- **New chunkers** (e.g. paragraph-aware, speaker-turn-aware for transcripts)
+- **New chunkers** (e.g. paragraph-aware, markdown-heading-aware, speaker-turn-aware)
 - **Performance improvements** (e.g. concurrent map phase, token-level budget estimation)
 - **Documentation and examples**
 

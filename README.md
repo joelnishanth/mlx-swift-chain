@@ -4,14 +4,14 @@ Document processing chains for [MLX Swift](https://github.com/ml-explore/mlx-swi
 
 ## The Problem
 
-Local LLMs have limited context windows (e.g. 8,192 tokens for Gemma models). A 2-hour meeting transcript (~20,000 words) far exceeds this limit. Naive prefix truncation discards most of the content:
+Local LLMs have limited context windows (e.g. 8,192 tokens for Gemma models). Long documents — research papers, legal contracts, codebases, transcripts — easily exceed this limit. Naive prefix truncation discards most of the content:
 
-| Meeting Length | Prefix Truncation Coverage | mlx-swift-chain Coverage |
+| Document Size | Prefix Truncation Coverage | mlx-swift-chain Coverage |
 |---|---|---|
-| 15 min (~2,500 words) | 100% | 100% |
-| 30 min (~5,000 words) | ~60% | **100%** |
-| 1 hour (~10,000 words) | ~30% | **100%** |
-| 2 hours (~20,000 words) | **7%** | **100%** |
+| ~2,500 words | 100% | 100% |
+| ~5,000 words | ~60% | **100%** |
+| ~10,000 words | ~30% | **100%** |
+| ~20,000 words | **7%** | **100%** |
 
 ## Installation
 
@@ -19,7 +19,7 @@ Add to your `Package.swift`:
 
 ```swift
 dependencies: [
-    .package(url: "https://github.com/offlyn/mlx-swift-chain", from: "0.1.0"),
+    .package(url: "https://github.com/joelnishanth/mlx-swift-chain", from: "0.1.0"),
 ],
 targets: [
     .target(
@@ -57,15 +57,54 @@ let chain = AdaptiveChain(
     contextBudgetWords: 1200
 )
 
-let result = try await chain.run(
-    transcript,
+// Summarize a long document
+let summary = try await chain.run(
+    document,
     mapPrompt: "Summarize this section concisely:\n\n",
-    reducePrompt: "Combine these summaries into one:\n\n",
-    systemPrompt: "You are a meeting notes assistant."
+    reducePrompt: "Combine these section summaries into a single coherent summary:\n\n",
+    systemPrompt: "You are a helpful assistant that produces clear, structured summaries."
 )
 ```
 
-That's it. For short texts, `AdaptiveChain` uses a single LLM call (zero overhead). For long texts, it automatically chunks the input, maps each chunk through the LLM, and reduces the results.
+For short texts, `AdaptiveChain` uses a single LLM call (zero overhead). For long texts, it automatically chunks the input, maps each chunk through the LLM, and reduces the results.
+
+### More Examples
+
+**Extract key information from a research paper:**
+
+```swift
+let chain = AdaptiveChain(backend: model, contextBudgetWords: 1000)
+
+let findings = try await chain.run(
+    paper,
+    mapPrompt: "List the key findings and methodology from this section:\n\n",
+    reducePrompt: "Consolidate these findings into a structured overview:\n\n"
+)
+```
+
+**Analyze a codebase or log file:**
+
+```swift
+let chain = AdaptiveChain(backend: model, contextBudgetWords: 800)
+
+let analysis = try await chain.run(
+    logOutput,
+    mapPrompt: "Identify errors, warnings, and anomalies in this log section:\n\n",
+    reducePrompt: "Merge and deduplicate these issues into a prioritized list:\n\n"
+)
+```
+
+**Extract action items from any long-form text:**
+
+```swift
+let chain = AdaptiveChain(backend: model, contextBudgetWords: 900)
+
+let tasks = try await chain.run(
+    notes,
+    mapPrompt: "Extract action items and to-dos from this section as JSON:\n\n",
+    reducePrompt: "Merge and deduplicate these action items into a single JSON array:\n\n"
+)
+```
 
 ## Chains
 
