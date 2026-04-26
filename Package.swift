@@ -1,4 +1,4 @@
-// swift-tools-version: 6.1
+// swift-tools-version: 5.9
 import PackageDescription
 
 let package = Package(
@@ -8,7 +8,7 @@ let package = Package(
         .library(name: "MLXSwiftChain", targets: ["MLXSwiftChain"]),
     ],
     dependencies: [
-        .package(url: "https://github.com/ml-explore/mlx-swift-lm", from: "3.31.3"),
+        .package(url: "https://github.com/ml-explore/mlx-swift-lm", from: "2.31.2"),
     ],
     targets: [
         .target(
