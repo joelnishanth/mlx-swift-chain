@@ -4,6 +4,8 @@ import Testing
 @Suite("AdaptiveChain Tests")
 struct AdaptiveChainTests {
 
+    private let zeroReserved = ChainExecutionOptions(reservedOutputTokens: 0)
+
     @Test("AdaptiveChain uses StuffChain for short text")
     func adaptive_shortText() async throws {
         let mock = MockLLMBackend()
@@ -11,7 +13,11 @@ struct AdaptiveChainTests {
         let chain = AdaptiveChain(backend: mock, contextBudgetWords: 100)
 
         let text = "short text within budget"
-        let result = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
+        let result = try await chain.run(
+            text, mapPrompt: "Map: ", reducePrompt: "Reduce: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: zeroReserved, progress: nil
+        )
 
         #expect(result == "stuffed result")
         #expect(mock.generateCallCount == 1, "Short text should use a single StuffChain call")
@@ -25,7 +31,11 @@ struct AdaptiveChainTests {
         let chain = AdaptiveChain(backend: mock, contextBudgetWords: 50)
 
         let text = (1...100).map { "word\($0)" }.joined(separator: " ")
-        _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
+        _ = try await chain.run(
+            text, mapPrompt: "Map: ", reducePrompt: "Reduce: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: zeroReserved, progress: nil
+        )
 
         #expect(mock.generateCallCount > 1, "Long text should trigger MapReduceChain with multiple calls")
     }
@@ -34,11 +44,14 @@ struct AdaptiveChainTests {
     func adaptive_exactBoundary() async throws {
         let mock = MockLLMBackend()
         mock.cannedResponse = "result"
-        // Budget must cover text + prompt overhead: 5 words text + 1 word "Reduce:" = 6
         let chain = AdaptiveChain(backend: mock, contextBudgetWords: 6)
 
         let text = "one two three four five"
-        _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
+        _ = try await chain.run(
+            text, mapPrompt: "Map: ", reducePrompt: "Reduce: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: zeroReserved, progress: nil
+        )
 
         #expect(mock.generateCallCount == 1, "Text at exactly the budget should use StuffChain")
     }
@@ -49,9 +62,12 @@ struct AdaptiveChainTests {
         mock.cannedResponse = "ok"
         let chain = AdaptiveChain(backend: mock, contextBudgetWords: 50)
 
-        // 50 words text + 1 word "Reduce:" = 51 > budget 50 → map-reduce
         let text = (1...50).map { "w\($0)" }.joined(separator: " ")
-        _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
+        _ = try await chain.run(
+            text, mapPrompt: "Map: ", reducePrompt: "Reduce: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: zeroReserved, progress: nil
+        )
 
         #expect(mock.generateCallCount > 1, "Text over budget should use MapReduceChain")
     }
@@ -60,11 +76,14 @@ struct AdaptiveChainTests {
     func adaptive_mixedWhitespaceCounting() async throws {
         let mock = MockLLMBackend()
         mock.cannedResponse = "result"
-        // Budget must cover text + prompt: 5 words text + 1 word "Reduce:" = 6
         let chain = AdaptiveChain(backend: mock, contextBudgetWords: 6)
 
         let text = "one two\tthree\nfour five"
-        _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
+        _ = try await chain.run(
+            text, mapPrompt: "Map: ", reducePrompt: "Reduce: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: zeroReserved, progress: nil
+        )
 
         #expect(mock.generateCallCount == 1, "Whitespace variations should still count as 5 words")
     }
@@ -86,7 +105,11 @@ struct AdaptiveChainTests {
         words[99] = "MARKER_END"
 
         let text = words.joined(separator: " ")
-        _ = try await chain.run(text, mapPrompt: "", reducePrompt: "Final: ")
+        _ = try await chain.run(
+            text, mapPrompt: "", reducePrompt: "Final: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: zeroReserved, progress: nil
+        )
 
         let allPrompts = mock.promptsReceived.joined(separator: " ")
         #expect(allPrompts.contains("MARKER_START"))
@@ -100,14 +123,14 @@ struct AdaptiveChainTests {
     func adaptive_promptOverhead() async throws {
         let mock = MockLLMBackend()
         mock.cannedResponse = "ok"
-        // 48 words text + 1 word "Reduce:" = 49 < 50 → stuff
-        // But "Combine these results: " = 3 words → 48 + 3 = 51 > 50 → map-reduce
         let chain = AdaptiveChain(backend: mock, contextBudgetWords: 50)
 
         let text = (1...48).map { "w\($0)" }.joined(separator: " ")
         _ = try await chain.run(
             text, mapPrompt: "Map this section: ",
-            reducePrompt: "Combine these results: "
+            reducePrompt: "Combine these results: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: zeroReserved, progress: nil
         )
 
         #expect(mock.generateCallCount > 1, "Prompt overhead should push text over budget to map-reduce")
@@ -123,7 +146,7 @@ struct AdaptiveChainTests {
         let result = try await chain.run(
             text, mapPrompt: "Map: ", reducePrompt: "Reduce: ",
             stuffPrompt: "StuffOverride: ", systemPrompt: nil,
-            options: ChainExecutionOptions(), progress: nil
+            options: zeroReserved, progress: nil
         )
 
         #expect(result == "stuffed")
@@ -138,7 +161,6 @@ struct AdaptiveChainTests {
         let chain = AdaptiveChain(backend: mock, contextBudgetWords: 20)
 
         let text = "one two three four five six seven eight nine ten"
-        // 10 words text + 1 word prompt + ~7 reserved (10 tokens / 1.33) = 18 fits in 20
         let fitsOptions = ChainExecutionOptions(reservedOutputTokens: 10)
         _ = try await chain.run(
             text, mapPrompt: "", reducePrompt: "R: ",
@@ -155,35 +177,89 @@ struct AdaptiveChainTests {
         let chain = AdaptiveChain(backend: mock, contextBudget: .tokens(50, estimatedTokensPerWord: 1.0))
 
         let text = (1...60).map { "word\($0)" }.joined(separator: " ")
-        _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
+        _ = try await chain.run(
+            text, mapPrompt: "Map: ", reducePrompt: "Reduce: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: zeroReserved, progress: nil
+        )
 
         #expect(mock.generateCallCount > 1)
     }
 
     @Test("AdaptiveChain uses TokenAwareBackend for precise budgeting")
     func adaptive_tokenAwareBackend() async throws {
-        // 1:1 token ratio, context window of 15 tokens
         let mock = MockTokenAwareBackend(contextWindowTokens: 15, tokensPerWord: 1.0)
         mock.cannedResponse = "result"
-        // Budget doesn't matter when backend provides context window
         let chain = AdaptiveChain(backend: mock, contextBudget: .words(999))
 
-        // 10 words text + "Reduce:" 1 word = 11 tokens -> fits in 15
         let text = "one two three four five six seven eight nine ten"
-        _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
+        _ = try await chain.run(
+            text, mapPrompt: "Map: ", reducePrompt: "Reduce: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: zeroReserved, progress: nil
+        )
         #expect(mock.generateCallCount == 1, "Should stuff when text fits in TokenAwareBackend context window")
     }
 
     @Test("AdaptiveChain routes to map-reduce when TokenAwareBackend window is exceeded")
     func adaptive_tokenAwareOverflow() async throws {
-        let mock = MockTokenAwareBackend(contextWindowTokens: 8, tokensPerWord: 1.0)
+        // Window 200 tokens, 1:1 ratio. Text + prompt ≈ 210 > 200 → map-reduce.
+        // Window large enough for safety margin + individual map chunks.
+        let mock = MockTokenAwareBackend(contextWindowTokens: 200, tokensPerWord: 1.0)
         mock.cannedResponse = "result"
         let chain = AdaptiveChain(backend: mock, contextBudget: .words(999))
 
-        // 10 words + 1 word prompt = 11 tokens > 8 window
-        let text = "one two three four five six seven eight nine ten"
-        _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
+        let text = (1...210).map { "w\($0)" }.joined(separator: " ")
+        _ = try await chain.run(
+            text, mapPrompt: "Map: ", reducePrompt: "Reduce: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: zeroReserved, progress: nil
+        )
         #expect(mock.generateCallCount > 1, "Should use map-reduce when exceeding TokenAwareBackend window")
     }
 
+    @Test("AdaptiveChain map-reduce accounts for map prompt in chunk budget")
+    func adaptive_mapReduceChunkBudgetAccountsForMapPrompt() async throws {
+        // Sentence-delimited text so SentenceAwareChunker fallback can split.
+        let text = (1...200).map { "Word\($0)." }.joined(separator: " ")
+        let options = ChainExecutionOptions(reservedOutputTokens: 0)
+
+        // Short prompt (1 word): available ≈ 200 - 1 - 96 = 103.
+        // FixedSizeChunker produces ~2 chunks of 150 words. 150 > 103 → rechunks.
+        // SentenceAwareChunker(targetWords: 103) → ~2 chunks.
+        let mock1 = MockLLMBackend()
+        mock1.cannedResponse = "ok"
+        let chain1 = AdaptiveChain(
+            backend: mock1,
+            contextBudget: .words(200),
+            chunker: FixedSizeChunker(maxWords: 150)
+        )
+        _ = try await chain1.run(
+            text, mapPrompt: "Summarize: ",
+            reducePrompt: "Combine: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: options, progress: nil
+        )
+        let shortPromptMapCalls = mock1.promptsReceived.filter { $0.hasPrefix("Summarize") }.count
+
+        // Long prompt (~28 words): available ≈ 200 - 28 - 96 = 76.
+        // Same initial chunks (150 words). 150 > 76 → rechunks.
+        // SentenceAwareChunker(targetWords: 76) → ~3 chunks.
+        let mock2 = MockLLMBackend()
+        mock2.cannedResponse = "ok"
+        let chain2 = AdaptiveChain(
+            backend: mock2,
+            contextBudget: .words(200),
+            chunker: FixedSizeChunker(maxWords: 150)
+        )
+        _ = try await chain2.run(
+            text, mapPrompt: "Please carefully summarize this particular section of the document text being sure to pay close attention to all the important details and key points within it: ",
+            reducePrompt: "Combine: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: options, progress: nil
+        )
+        let longPromptMapCalls = mock2.promptsReceived.filter { $0.hasPrefix("Please") }.count
+
+        #expect(longPromptMapCalls > shortPromptMapCalls, "Longer map prompt should force rechunking into more, smaller chunks")
+    }
 }

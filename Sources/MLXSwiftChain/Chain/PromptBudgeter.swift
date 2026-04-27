@@ -69,6 +69,36 @@ public struct PromptBudgeter: Sendable {
 
     /// The total budget limit in the counter's units.
     public var budgetLimit: Int { limit }
+
+    /// Returns the number of units (tokens or words, matching the budgeter's
+    /// counting mode) available for input text after accounting for prompt
+    /// overhead, reserved output, and a safety margin.
+    ///
+    /// Both `reservedOutputTokens` and `safetyMargin` are specified in tokens
+    /// and converted to word-equivalent units when the budgeter is in word mode.
+    public func availableTextBudget(
+        systemPrompt: String?,
+        taskPrompt: String,
+        reservedOutputTokens: Int,
+        safetyMargin: Int = 128
+    ) -> Int {
+        let systemCount = count(systemPrompt ?? "")
+        let taskCount = count(taskPrompt)
+        let reservedCount: Int
+        let marginCount: Int
+
+        switch mode {
+        case .tokenBased:
+            reservedCount = reservedOutputTokens
+            marginCount = safetyMargin
+        case .wordBased:
+            reservedCount = Int(Double(reservedOutputTokens) / 1.33)
+            marginCount = Int(Double(safetyMargin) / 1.33)
+        }
+
+        let overhead = systemCount + taskCount + reservedCount + marginCount
+        return max(1, limit - overhead)
+    }
 }
 
 /// Simple word counter conforming to TokenCounter for word-based budgeting.

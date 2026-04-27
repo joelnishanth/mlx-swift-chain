@@ -6,11 +6,13 @@ import Foundation
 /// inference calls. For remote backends, increase `maxConcurrentMapTasks`.
 public struct ChainExecutionOptions: Sendable, Equatable {
     /// Tokens to reserve for the model's output in budget calculations.
+    /// Defaults to 512, which provides a conservative margin for most
+    /// on-device models. Set to 0 for maximum-input / legacy behavior.
     public var reservedOutputTokens: Int
 
-    /// Maximum summaries to combine in a single reduce call during
-    /// hierarchical reduce. When the budget is known, actual group size
-    /// is derived from remaining budget; this acts as an upper bound.
+    /// Upper bound on summaries to combine in a single reduce call during
+    /// hierarchical reduce. When a context budget is available, actual group
+    /// size is derived from remaining budget; this acts as a cap.
     public var maxReduceGroupSize: Int
 
     /// Safety limit on recursive reduce depth to prevent runaway loops
@@ -31,7 +33,7 @@ public struct ChainExecutionOptions: Sendable, Equatable {
     public var retryPolicy: RetryPolicy
 
     public init(
-        reservedOutputTokens: Int = 0,
+        reservedOutputTokens: Int = 512,
         maxReduceGroupSize: Int = 8,
         maxReduceDepth: Int = 5,
         maxConcurrentMapTasks: Int = 1,

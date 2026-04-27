@@ -52,24 +52,33 @@ MLX Swift and MLX Swift LM provide the model/runtime layer. This package now pro
 | Long input handling | Basic stuff/map-reduce | Adaptive routing with prompt budgeting and hierarchical reduce | Safer for large docs |
 | Token/context budgeting | Word-count oriented | Token-aware hooks and prompt overhead accounting | Reduces context overflow |
 | Transcript support | Basic transcript chunking | Meeting + single-speaker voice note/memo support with adaptive attribution | Better voice note and lecture workflows |
-| Document summarization | No structure-aware chunker | `DocumentStructureChunker` with page/heading/table preservation | Grounded document summaries |
+| Document summarization | No structure-aware chunker | `DocumentStructureChunker` with page/heading/Markdown-table preservation | Grounded document summaries |
 | Logs/crash | Generic log chunking | Diagnostic classification and crash-report support | Strong developer adoption wedge |
 | SwiftUI | Manual integration | Reactive `ChainRunner` | Easier app adoption |
 | Prompts | Few generic templates | 11 domain-specific templates | Faster time-to-value |
-| Tests | ~30 tests | 96 tests | 3x coverage increase |
+| Tests | ~30 tests | 105 tests | 3.5x coverage increase |
 | Docs | Basic package docs | Adoption-focused README and docs | Easier for MLX/Swift developers to understand |
+
+## Follow-up fixes from expert review
+
+- Map chunks are now budget-aware and account for prompt/system/output overhead.
+- Hierarchical reduce now uses `PromptBudgeter`, including `TokenAwareBackend` when available.
+- `preserveOrder` now controls concurrent map result ordering while preserving source chunk labels.
+- Reduce grouping is now budget-derived and capped by `maxReduceGroupSize`.
+- Default reserved output budget is now 512 tokens.
+- README wording now accurately frames PDF-extracted text and `.ips` support.
+- Added `ChunkPromptFormatter` for richer diagnostic chunk labels.
+- `MLXBackend` `@unchecked Sendable` comment now precisely describes lock protection.
 
 ## Validation
 
 - [x] `swift package resolve`
 - [x] `swift build` — 0 errors, 0 warnings
-- [x] `swift test` — 96 tests, 0 failures
+- [x] `swift test` — 105 tests, 0 failures
 
 Final local status:
-- Tests passing: 96
-- Warnings: 0
-- Source files: 30
-- Test files: 8
+- Tests passing: 105
+- Warnings: 0 (2 pre-existing in test files)
 
 ## Compatibility
 
@@ -80,7 +89,8 @@ Final local status:
 
 ## Limitations
 
-- This package does not parse PDFs directly or perform OCR.
+- This package does not parse PDFs directly or perform OCR. For PDFs, extract text first and preserve page markers when possible. Table preservation is best-effort and primarily supports Markdown-style tables.
+- `AppleCrashReportChunker` handles translated `.crash` text and lightweight grouping for JSON-like `.ips` text. It does not fully interpret Apple's crash-report JSON schema.
 - This package does not acquire logs from Xcode, devices, or Console.app.
 - It analyzes user-provided text.
 - Whether inference stays local depends on the backend supplied by the app.

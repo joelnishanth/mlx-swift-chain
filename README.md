@@ -6,7 +6,7 @@
 
 Long-document chunking, map-reduce, prompt budgeting, and source-grounded summarization for MLX Swift apps on macOS and iOS.
 
-Process meeting transcripts, voice notes, Markdown/PDF-extracted docs, Xcode logs, crash reports, and field manuals locally on macOS and iOS using MLX Swift-compatible backends.
+Process meeting transcripts, voice notes, Markdown documents, PDF-extracted text, Xcode logs, crash reports, and field manuals locally on macOS and iOS using MLX Swift-compatible backends.
 
 ## Why This Exists
 
@@ -71,7 +71,7 @@ For short texts, `AdaptiveChain` uses a single LLM call (zero overhead). For lon
 | Use Case | Chunker | Templates | Value |
 |---|---|---|---|
 | Meeting transcript / voice note | `TranscriptChunker` | `transcriptSummary`, `actionItems`, `voiceNoteSummary`, `personalMemoActions` | Speaker/temporal/topic attribution preserves who said what and when |
-| Markdown / PDF-extracted docs | `DocumentStructureChunker` or `MarkdownHeadingChunker` | `markdownBrief`, `documentExecutiveSummary`, `documentStudyGuide` | Heading/page/source-aware summaries with `DocumentLocation` metadata |
+| Markdown / PDF-extracted text | `DocumentStructureChunker` or `MarkdownHeadingChunker` | `markdownBrief`, `documentExecutiveSummary`, `documentStudyGuide` | Heading/page/source-aware summaries with `DocumentLocation` metadata |
 | Xcode / simulator / crash logs | `LogChunker` or `AppleCrashReportChunker` | `logRootCause`, `appleCrashTriage`, `xcodeBuildFailure`, `testFailureAnalysis` | Source-grounded private developer triage with diagnostic classification |
 | Offline field manuals / emergency docs | `DocumentStructureChunker` | `markdownBrief`, `documentExecutiveSummary` | On-device reference material processing with page/section tracking |
 | Generic prose | `SentenceAwareChunker` | Custom prompt | Safe fallback for any text |
@@ -100,8 +100,8 @@ All templates are accessed via `PromptTemplates.<name>` and work with the `chain
 | `TranscriptChunker` | Meeting transcripts, voice notes, lectures, and memos. Auto-selects speaker, temporal, or topical attribution. |
 | `MarkdownHeadingChunker` | Markdown documents. Splits at headings, preserves structure. Falls back to sentence splitting for large sections. |
 | `LogChunker` | Xcode/simulator logs. Keeps stack traces intact, splits at timestamp boundaries. Classifies chunks by diagnostic kind. |
-| `AppleCrashReportChunker` | Apple crash reports (`.crash` / `.ips`). Preserves crashed thread, exception info, and binary images. Detects symbolication status. |
-| `DocumentStructureChunker` | Markdown or PDF-extracted documents. Preserves headings, page ranges, tables, and code blocks. Populates `DocumentLocation` metadata. |
+| `AppleCrashReportChunker` | Apple crash reports — translated `.crash` text and lightweight grouping for JSON-like `.ips` text. Preserves crashed thread, exception info, and binary images. Detects symbolication status. Does not fully interpret Apple's crash-report JSON schema. |
+| `DocumentStructureChunker` | Markdown or PDF-extracted text. Preserves headings, page markers, Markdown-style tables, fenced code blocks, and lists. Populates `DocumentLocation` metadata. PDF parsing and OCR are out of scope — extract text first and preserve page markers when possible. |
 
 All chunkers populate `TextChunkMetadata` with chunk index, source word ranges, discovered timestamps, and speaker labels.
 
@@ -246,11 +246,13 @@ struct SummaryView: View {
 
 ## Production Options
 
-**Token budgeting:** `AdaptiveChain` accounts for system prompt, task prompt, input text, and reserved output tokens when deciding stuff vs. map-reduce routing. Backends conforming to `TokenAwareBackend` enable exact token counting.
+**Token budgeting:** `AdaptiveChain` accounts for system prompt, task prompt, input text, and reserved output tokens when deciding stuff vs. map-reduce routing. Backends conforming to `TokenAwareBackend` enable exact token counting. Map chunks are also budget-aware — if a specialized chunker emits oversized chunks, they are automatically re-split to fit within the map prompt budget.
 
-**Hierarchical reduce:** When `MapReduceChain` is initialized with a `contextBudget`, it automatically groups and recursively reduces summaries that exceed the budget, preventing context overflow on large documents.
+**Hierarchical reduce:** When `MapReduceChain` is initialized with a `contextBudget`, it automatically groups and recursively reduces summaries that exceed the budget, preventing context overflow on large documents. Reduce-fit checks use `PromptBudgeter` (including `TokenAwareBackend` when available), and group sizes are budget-derived up to the `maxReduceGroupSize` cap.
 
-**Concurrency:** `ChainExecutionOptions(maxConcurrentMapTasks: 4)` enables bounded parallel mapping. Default is 1, which is optimal for on-device MLX inference.
+**Reserved output tokens:** `ChainExecutionOptions` reserves 512 tokens for model output by default, providing a conservative margin for budget calculations. Set to 0 for maximum-input / legacy behavior.
+
+**Concurrency:** `ChainExecutionOptions(maxConcurrentMapTasks: 4)` enables bounded parallel mapping. Default is 1, which is optimal for on-device MLX inference. Set `preserveOrder: false` to receive map results in completion order rather than original chunk order.
 
 **Retries:** `ChainExecutionOptions(retryPolicy: RetryPolicy(maxAttempts: 3, delayMilliseconds: 500))` adds retry logic, primarily useful for remote backends.
 
@@ -287,7 +289,9 @@ let result = try await chain.run(text, mapPrompt: "...", reducePrompt: "...", pr
 
 ## Diagnostic Log Analysis
 
-mlx-swift-chain can chunk and summarize long diagnostic logs entirely on-device. Use `AppleCrashReportChunker` for `.crash` or `.ips` text, and `LogChunker` for simulator logs, Xcode build output, and test failures.
+mlx-swift-chain can chunk and summarize long diagnostic logs entirely on-device. Use `AppleCrashReportChunker` for translated `.crash` text and lightweight grouping of JSON-like `.ips` text, and `LogChunker` for simulator logs, Xcode build output, and test failures. The crash chunker does not fully interpret Apple's crash-report JSON schema.
+
+For diagnostic workflows, `ChunkPromptFormatter.labeledText(for:)` produces richer chunk labels using `DiagnosticSourceLabel` metadata when available (e.g. `[Chunk 2, exceptionInfo, EXC_BAD_ACCESS]`).
 
 | Input | Chunker | Prompt Template |
 |---|---|---|

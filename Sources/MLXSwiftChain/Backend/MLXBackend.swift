@@ -8,8 +8,12 @@ import MLXLMCommon
 /// call is independent. The `generateParameters` property controls
 /// temperature, maxTokens, topP, and other sampling parameters.
 ///
-/// `@unchecked Sendable` is safe because `ModelContainer` is an actor
-/// and mutable state is protected by `lock`.
+/// `@unchecked Sendable` is used because `ModelContainer` sendability is
+/// not fully expressed in this package's public type constraints. The only
+/// mutable state owned by this wrapper is generation parameters, which are
+/// protected by `NSLock`. Callers should still treat backend/model execution
+/// as resource-constrained and avoid unnecessary concurrent on-device
+/// generations.
 public final class MLXBackend: LLMBackend, @unchecked Sendable {
     private let container: ModelContainer
     private let lock = NSLock()

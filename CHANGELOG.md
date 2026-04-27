@@ -35,6 +35,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `GenerateParameters` exposed on `MLXBackend` for temperature, maxTokens, topP control.
 - Source-grounded chunk labels (`[Chunk N]`) that propagate through hierarchical reduce levels.
 
+### Added (expert review follow-up)
+- Budget-aware map chunk sizing — `PromptBudgeter.availableTextBudget(...)` and automatic rechunking in `MapReduceChain` when specialized chunkers emit oversized chunks.
+- Token-aware hierarchical reduce — `fitsInSingleReduce` and reduce grouping now use `PromptBudgeter`, including `TokenAwareBackend` when available.
+- Budget-derived reduce grouping — `makeReduceGroups` accumulates summaries up to the context budget, capped by `maxReduceGroupSize`.
+- `preserveOrder` option is now functional — `concurrentMap` returns results in completion order when `preserveOrder` is false, preserving correct chunk labels via `MapResult`.
+- `ChunkPromptFormatter` for richer chunk labels using `DiagnosticSourceLabel` metadata.
+- Conservative default `reservedOutputTokens` of 512 in `ChainExecutionOptions`.
+
 ### Changed
 - README repositioned around "Swift-native long-document reasoning for private, on-device MLX apps."
 - `AdaptiveChain` now considers prompt overhead (system prompt + task prompt + reserved output) when routing between stuff and map-reduce.
@@ -42,6 +50,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `ContextBudget` extended with `fitsInBudget(textWords:promptOverheadWords:reservedOutputWords:)` for prompt-overhead-aware checks.
 - Architecture docs expanded with component graph, domain chunker descriptions, and production reliability notes.
 - CI workflow streamlined to resolve, build, test on macOS 15.
+
+### Changed (expert review follow-up)
+- `MapReduceChain.fitsInSingleReduce` replaced with `PromptBudgeter`-based logic for token-accurate reduce checks.
+- `maxReduceGroupSize` docs updated — actual group size is now budget-derived when a context budget exists.
+- `MLXBackend` `@unchecked Sendable` comment now precisely describes lock protection and resource constraints.
+- README and docs now accurately describe `.ips` support as lightweight JSON-like grouping, and PDF/table support as Markdown-style / best-effort.
 
 ### Fixed
 - Long-document reduce overflow risk reduced with hierarchical reduce — prevents final prompt from exceeding context window.

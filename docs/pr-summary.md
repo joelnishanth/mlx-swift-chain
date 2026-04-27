@@ -75,20 +75,31 @@ Local/offline workflows need deterministic chunking, budgeting, progress, retrie
 - CHANGELOG with categorized additions.
 - Updated CONTRIBUTING.md with development setup and domain contribution areas.
 
-### 8. Tests and validation
+### 8. Expert review follow-up
+
+- Budget-aware map chunk sizing with `PromptBudgeter.availableTextBudget(...)` and automatic rechunking.
+- Token-aware hierarchical reduce via `PromptBudgeter` (including `TokenAwareBackend`).
+- Functional `preserveOrder` option for concurrent map result ordering.
+- Budget-derived reduce grouping capped by `maxReduceGroupSize`.
+- Conservative default `reservedOutputTokens` of 512.
+- `ChunkPromptFormatter` for richer diagnostic chunk labels.
+- Precise `@unchecked Sendable` comment on `MLXBackend`.
+- Docs accurately describe `.ips` as lightweight JSON-like grouping and PDF support as best-effort text.
+
+### 9. Tests and validation
 
 ```
 swift package resolve   # resolves mlx-swift-lm dependency
 swift build             # 0 errors, 0 warnings
-swift test              # 96 tests, 0 failures
+swift test              # 105 tests, 0 failures
 ```
 
 **Test coverage by area:**
 
 | Area | Tests | Suite |
 |---|---|---|
-| Chain routing (stuff vs map-reduce) | 12 | AdaptiveChainTests |
-| Map-reduce, hierarchical reduce, concurrency | 13 | MapReduceChainTests |
+| Chain routing (stuff vs map-reduce) | 13 | AdaptiveChainTests |
+| Map-reduce, hierarchical reduce, concurrency, budgeting | 22 | MapReduceChainTests |
 | Retry policy | 3 | RetryTests |
 | Benchmark coverage | 1 | BenchmarkCoverageTests |
 | FixedSize, SentenceAware, Transcript, Markdown, Log chunkers | 34 | ChunkerTests |
@@ -104,11 +115,11 @@ swift test              # 96 tests, 0 failures
 | Long-document reduce | Single reduce pass | Hierarchical reduce with configurable depth | Prevents context overflow when combined summaries exceed window |
 | Token budgeting | Word-count heuristic | `TokenCounter` protocol, `PromptBudgeter`, `TokenAwareBackend` | More accurate budget checks for languages and prompts where words are a poor token proxy |
 | Transcript handling | Basic chunking | Speaker/temporal/topical attribution, single-speaker support | Better for voice notes, lectures, memos — not just multi-speaker meetings |
-| Document summarization | No structure-aware chunker | `DocumentStructureChunker` with page/heading/table/code preservation | Heading-path and page-range metadata for grounded document summaries |
-| Log/crash analysis | Basic log chunking | Diagnostic classification, crash report parser, symbolication detection | Strong developer adoption wedge — private on-device triage |
+| Document summarization | No structure-aware chunker | `DocumentStructureChunker` with page/heading/Markdown-table/code preservation | Heading-path and page-range metadata for grounded document summaries |
+| Log/crash analysis | Basic log chunking | Diagnostic classification, crash report text chunking, symbolication detection | Strong developer adoption wedge — private on-device triage |
 | SwiftUI integration | None | `ChainRunner` with reactive state | Easier app integration |
 | MLX generation options | Fixed parameters | Exposed `GenerateParameters` | Control temperature, maxTokens, topP per call |
-| Tests | ~30 | 96 | 3x coverage increase |
+| Tests | ~30 | 105 | 3.5x coverage increase |
 | Docs/adoption | Basic | Adoption-focused README, architecture, changelog, contribution guide | Easier for MLX/Swift developers to understand and adopt |
 
 ## Compatibility
@@ -126,7 +137,8 @@ swift test              # 96 tests, 0 failures
 - Does not call Xcode APIs or private Apple frameworks.
 - Does not guarantee model quality — output quality depends on the backend model and prompt.
 - Source labels help verification but do not replace human review for crash/emergency analysis.
-- `AppleCrashReportChunker` uses line-level regex for `.ips` format, not a full JSON parser.
+- `AppleCrashReportChunker` handles translated `.crash` text and lightweight grouping for JSON-like `.ips` text. It does not fully interpret Apple's crash-report JSON schema.
+- PDF parsing and OCR are out of scope. Table preservation is best-effort and primarily supports Markdown-style tables.
 
 ## Suggested Review Order
 

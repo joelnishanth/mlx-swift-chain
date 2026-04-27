@@ -22,11 +22,17 @@ public struct MapReduceChain: DocumentChain {
         self.contextBudget = nil
     }
 
-    /// Initialize with an explicit context budget for hierarchical reduce decisions.
+    /// Initialize with an explicit context budget for hierarchical reduce
+    /// decisions, budget-aware map chunk sizing, and reduce grouping.
     public init(backend: any LLMBackend, chunker: any TextChunker, contextBudget: ContextBudget) {
         self.backend = backend
         self.chunker = chunker
         self.contextBudget = contextBudget
+    }
+
+    private struct MapResult {
+        let chunkIndex: Int
+        let text: String
     }
 
     public func run(
@@ -41,17 +47,25 @@ public struct MapReduceChain: DocumentChain {
         let start = ContinuousClock.now
         defer { progress?.finish() }
 
-        let chunks = chunker.chunk(text)
+        let initialChunks = chunker.chunk(text)
 
-        guard !chunks.isEmpty else {
+        guard !initialChunks.isEmpty else {
             progress?.report(ChainProgress.Update(phase: .complete, elapsedTime: .zero))
             return ""
         }
 
+        let chunks = rechunkIfNeeded(
+            text,
+            existingChunks: initialChunks,
+            mapPrompt: mapPrompt,
+            systemPrompt: systemPrompt,
+            options: options
+        )
+
         // Map phase
-        let chunkResults: [String]
+        let mapResults: [MapResult]
         if options.maxConcurrentMapTasks > 1 {
-            chunkResults = try await concurrentMap(
+            mapResults = try await concurrentMap(
                 chunks: chunks,
                 mapPrompt: mapPrompt,
                 systemPrompt: systemPrompt,
@@ -60,7 +74,7 @@ public struct MapReduceChain: DocumentChain {
                 start: start
             )
         } else {
-            chunkResults = try await sequentialMap(
+            mapResults = try await sequentialMap(
                 chunks: chunks,
                 mapPrompt: mapPrompt,
                 systemPrompt: systemPrompt,
@@ -71,8 +85,8 @@ public struct MapReduceChain: DocumentChain {
         }
 
         // Reduce phase (hierarchical when needed)
-        let labeledSummaries = chunkResults.enumerated().map { i, result in
-            "[Chunk \(i + 1)] \(result)"
+        let labeledSummaries = mapResults.map { result in
+            "[Chunk \(result.chunkIndex + 1)] \(result.text)"
         }
 
         let finalResult = try await hierarchicalReduce(
@@ -90,6 +104,34 @@ public struct MapReduceChain: DocumentChain {
         return finalResult
     }
 
+    // MARK: - Budget-Aware Rechunking
+
+    /// Re-chunks text when the user-provided chunker produces chunks that
+    /// exceed the available map budget (context minus prompt overhead,
+    /// reserved output, and safety margin).
+    ///
+    /// Specialized chunker metadata may be reduced for oversized chunks
+    /// that require fallback splitting to prevent prompt overflow.
+    private func rechunkIfNeeded(
+        _ text: String,
+        existingChunks: [TextChunk],
+        mapPrompt: String,
+        systemPrompt: String?,
+        options: ChainExecutionOptions
+    ) -> [TextChunk] {
+        guard let budget = contextBudget else { return existingChunks }
+        let budgeter = PromptBudgeter(backend: backend, budget: budget)
+        let available = budgeter.availableTextBudget(
+            systemPrompt: systemPrompt,
+            taskPrompt: mapPrompt,
+            reservedOutputTokens: options.reservedOutputTokens
+        )
+        let maxChunkSize = existingChunks.map { budgeter.count($0.text) }.max() ?? 0
+        if maxChunkSize <= available { return existingChunks }
+        let fallback = SentenceAwareChunker(targetWords: max(1, available))
+        return fallback.chunk(text)
+    }
+
     // MARK: - Map Strategies
 
     private func sequentialMap(
@@ -99,8 +141,8 @@ public struct MapReduceChain: DocumentChain {
         options: ChainExecutionOptions,
         progress: ChainProgress?,
         start: ContinuousClock.Instant
-    ) async throws -> [String] {
-        var results: [String] = []
+    ) async throws -> [MapResult] {
+        var results: [MapResult] = []
         results.reserveCapacity(chunks.count)
 
         for (i, chunk) in chunks.enumerated() {
@@ -112,7 +154,7 @@ public struct MapReduceChain: DocumentChain {
             let result = try await withRetry(policy: options.retryPolicy) {
                 try await self.backend.generate(prompt: prompt, systemPrompt: systemPrompt)
             }
-            results.append(result)
+            results.append(MapResult(chunkIndex: i, text: result))
         }
         return results
     }
@@ -124,12 +166,14 @@ public struct MapReduceChain: DocumentChain {
         options: ChainExecutionOptions,
         progress: ChainProgress?,
         start: ContinuousClock.Instant
-    ) async throws -> [String] {
-        try await withThrowingTaskGroup(of: (Int, String).self) { group in
+    ) async throws -> [MapResult] {
+        try await withThrowingTaskGroup(of: MapResult.self) { group in
             var inFlight = 0
             var nextIndex = 0
-            var results = [Int: String]()
-            results.reserveCapacity(chunks.count)
+            var orderedResults = [Int: String]()
+            var completionOrder: [MapResult] = []
+            orderedResults.reserveCapacity(chunks.count)
+            completionOrder.reserveCapacity(chunks.count)
             var completedCount = 0
 
             while nextIndex < chunks.count || !group.isEmpty {
@@ -142,13 +186,14 @@ public struct MapReduceChain: DocumentChain {
                         let result = try await withRetry(policy: options.retryPolicy) {
                             try await self.backend.generate(prompt: prompt, systemPrompt: systemPrompt)
                         }
-                        return (idx, result)
+                        return MapResult(chunkIndex: idx, text: result)
                     }
                     inFlight += 1
                     nextIndex += 1
                 }
-                if let (idx, result) = try await group.next() {
-                    results[idx] = result
+                if let mapResult = try await group.next() {
+                    orderedResults[mapResult.chunkIndex] = mapResult.text
+                    completionOrder.append(mapResult)
                     inFlight -= 1
                     completedCount += 1
                     let elapsed = ContinuousClock.now - start
@@ -156,7 +201,11 @@ public struct MapReduceChain: DocumentChain {
                 }
             }
 
-            return (0..<chunks.count).map { results[$0]! }
+            if options.preserveOrder {
+                return (0..<chunks.count).map { MapResult(chunkIndex: $0, text: orderedResults[$0]!) }
+            } else {
+                return completionOrder
+            }
         }
     }
 
@@ -176,21 +225,28 @@ public struct MapReduceChain: DocumentChain {
         }
 
         let combined = formatSummaries(summaries)
-        let reduceInput = reducePrompt + combined
 
-        if fitsInSingleReduce(reduceInput, systemPrompt: systemPrompt, options: options) {
+        if fitsInSingleReduce(
+            combined: combined,
+            reducePrompt: reducePrompt,
+            systemPrompt: systemPrompt,
+            options: options
+        ) {
             try Task.checkCancellation()
             let elapsed = ContinuousClock.now - start
             progress?.report(ChainProgress.Update(phase: .reducing, elapsedTime: elapsed))
+            let reduceInput = reducePrompt + combined
             return try await withRetry(policy: options.retryPolicy) {
                 try await self.backend.generate(prompt: reduceInput, systemPrompt: systemPrompt)
             }
         }
 
-        let groupSize = max(2, options.maxReduceGroupSize)
-        let groups = stride(from: 0, to: summaries.count, by: groupSize).map { startIdx in
-            Array(summaries[startIdx..<min(startIdx + groupSize, summaries.count)])
-        }
+        let groups = makeReduceGroups(
+            summaries: summaries,
+            reducePrompt: reducePrompt,
+            systemPrompt: systemPrompt,
+            options: options
+        )
 
         var intermediateSummaries: [String] = []
         intermediateSummaries.reserveCapacity(groups.count)
@@ -225,24 +281,70 @@ public struct MapReduceChain: DocumentChain {
 
     // MARK: - Helpers
 
-    private func fitsInSingleReduce(_ prompt: String, systemPrompt: String?, options: ChainExecutionOptions) -> Bool {
-        guard let budget = contextBudget else {
-            return true
-        }
-        let promptWords = prompt.split(whereSeparator: \.isWhitespace).count
-        let systemWords = systemPrompt?.split(whereSeparator: \.isWhitespace).count ?? 0
-        let reservedWords: Int
-        switch budget {
-        case .words:
-            reservedWords = Int(Double(options.reservedOutputTokens) / 1.33)
-        case .tokens(_, let ratio):
-            reservedWords = Int(Double(options.reservedOutputTokens) / max(0.1, ratio))
-        }
-        return budget.fitsInBudget(
-            textWords: promptWords,
-            promptOverheadWords: systemWords,
-            reservedOutputWords: reservedWords
+    /// Uses `PromptBudgeter` for reduce-fit checks, supporting exact token
+    /// counting when the backend conforms to `TokenAwareBackend`.
+    private func fitsInSingleReduce(
+        combined: String,
+        reducePrompt: String,
+        systemPrompt: String?,
+        options: ChainExecutionOptions
+    ) -> Bool {
+        guard let budget = contextBudget else { return true }
+        let budgeter = PromptBudgeter(backend: backend, budget: budget)
+        return budgeter.fits(
+            systemPrompt: systemPrompt,
+            taskPrompt: reducePrompt,
+            text: combined,
+            reservedOutputTokens: options.reservedOutputTokens
         )
+    }
+
+    /// Groups summaries for hierarchical reduce. When a context budget is
+    /// available, accumulates summaries into a group while the combined
+    /// text fits within budget, capped by `maxReduceGroupSize`. Without a
+    /// budget, uses fixed-size grouping.
+    private func makeReduceGroups(
+        summaries: [String],
+        reducePrompt: String,
+        systemPrompt: String?,
+        options: ChainExecutionOptions
+    ) -> [[String]] {
+        let maxSize = max(2, options.maxReduceGroupSize)
+
+        guard let budget = contextBudget else {
+            return stride(from: 0, to: summaries.count, by: maxSize).map { startIdx in
+                Array(summaries[startIdx..<min(startIdx + maxSize, summaries.count)])
+            }
+        }
+
+        let budgeter = PromptBudgeter(backend: backend, budget: budget)
+        var groups: [[String]] = []
+        var current: [String] = []
+
+        for summary in summaries {
+            let candidate = current + [summary]
+            if candidate.count > maxSize {
+                if !current.isEmpty { groups.append(current) }
+                current = [summary]
+                continue
+            }
+            let candidateText = formatSummaries(candidate)
+            if current.isEmpty || budgeter.fits(
+                systemPrompt: systemPrompt,
+                taskPrompt: reducePrompt,
+                text: candidateText,
+                reservedOutputTokens: options.reservedOutputTokens
+            ) {
+                current = candidate
+            } else {
+                groups.append(current)
+                current = [summary]
+            }
+        }
+        if !current.isEmpty {
+            groups.append(current)
+        }
+        return groups
     }
 
     private func formatSummaries(_ summaries: [String]) -> String {
