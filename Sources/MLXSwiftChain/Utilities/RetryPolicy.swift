@@ -21,14 +21,20 @@ public struct RetryPolicy: Sendable, Equatable {
 }
 
 /// Execute an async operation with retry according to the given policy.
+///
+/// `CancellationError` is never retried — it propagates immediately so that
+/// cooperative task cancellation is respected.
 func withRetry<T: Sendable>(
     policy: RetryPolicy,
     operation: @Sendable () async throws -> T
 ) async throws -> T {
     var lastError: (any Error)?
     for attempt in 1...policy.maxAttempts {
+        try Task.checkCancellation()
         do {
             return try await operation()
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             lastError = error
             if attempt < policy.maxAttempts && policy.delayMilliseconds > 0 {

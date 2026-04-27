@@ -21,10 +21,10 @@ struct AdaptiveChainTests {
     @Test("AdaptiveChain uses MapReduceChain for long text")
     func adaptive_longText() async throws {
         let mock = MockLLMBackend()
-        mock.cannedResponse = "chunk result"
-        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 5)
+        mock.cannedResponse = "ok"
+        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 50)
 
-        let text = "one two three four five six seven eight nine ten eleven twelve"
+        let text = (1...100).map { "word\($0)" }.joined(separator: " ")
         _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
 
         #expect(mock.generateCallCount > 1, "Long text should trigger MapReduceChain with multiple calls")
@@ -46,10 +46,11 @@ struct AdaptiveChainTests {
     @Test("AdaptiveChain boundary: one word over budget uses map-reduce")
     func adaptive_overBoundary() async throws {
         let mock = MockLLMBackend()
-        mock.cannedResponse = "result"
-        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 5)
+        mock.cannedResponse = "ok"
+        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 50)
 
-        let text = "one two three four five six"
+        // 50 words text + 1 word "Reduce:" = 51 > budget 50 → map-reduce
+        let text = (1...50).map { "w\($0)" }.joined(separator: " ")
         _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
 
         #expect(mock.generateCallCount > 1, "Text over budget should use MapReduceChain")
@@ -98,12 +99,12 @@ struct AdaptiveChainTests {
     @Test("AdaptiveChain routes to map-reduce when prompt overhead pushes over budget")
     func adaptive_promptOverhead() async throws {
         let mock = MockLLMBackend()
-        mock.cannedResponse = "result"
-        // 4 words of text fits in 5-word budget alone, but "Reduce:" adds 1 word = 5 total = budget
-        // A longer prompt pushes it over
-        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 5)
+        mock.cannedResponse = "ok"
+        // 48 words text + 1 word "Reduce:" = 49 < 50 → stuff
+        // But "Combine these results: " = 3 words → 48 + 3 = 51 > 50 → map-reduce
+        let chain = AdaptiveChain(backend: mock, contextBudgetWords: 50)
 
-        let text = "one two three four"
+        let text = (1...48).map { "w\($0)" }.joined(separator: " ")
         _ = try await chain.run(
             text, mapPrompt: "Map this section: ",
             reducePrompt: "Combine these results: "
@@ -150,10 +151,10 @@ struct AdaptiveChainTests {
     @Test("AdaptiveChain supports token-oriented budget strategy")
     func adaptive_tokenBudget() async throws {
         let mock = MockLLMBackend()
-        mock.cannedResponse = "result"
-        let chain = AdaptiveChain(backend: mock, contextBudget: .tokens(8, estimatedTokensPerWord: 1.0))
+        mock.cannedResponse = "ok"
+        let chain = AdaptiveChain(backend: mock, contextBudget: .tokens(50, estimatedTokensPerWord: 1.0))
 
-        let text = "one two three four five six seven eight nine"
+        let text = (1...60).map { "word\($0)" }.joined(separator: " ")
         _ = try await chain.run(text, mapPrompt: "Map: ", reducePrompt: "Reduce: ")
 
         #expect(mock.generateCallCount > 1)

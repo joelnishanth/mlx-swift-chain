@@ -73,7 +73,7 @@ public struct AdaptiveChain: DocumentChain {
             )
         }
 
-        let mapReduce = MapReduceChain(backend: backend, chunker: chunker)
+        let mapReduce = MapReduceChain(backend: backend, chunker: chunker, contextBudget: contextBudget)
         return try await mapReduce.run(
             text, mapPrompt: mapPrompt, reducePrompt: reducePrompt,
             stuffPrompt: stuffPrompt, systemPrompt: systemPrompt,
