@@ -40,8 +40,12 @@ public final class ChainRunner {
     public private(set) var isRunning = false
     /// The final result from the most recent chain execution.
     public private(set) var result: String?
+    /// Rich result with source chunks and metrics from the most recent execution.
+    public private(set) var chainResult: ChainResult?
     /// Error from the most recent chain execution, if any.
     public private(set) var error: (any Error)?
+    /// Partial text accumulated during streaming execution.
+    public private(set) var partialText: String?
 
     private var currentTask: Task<Void, Never>?
 
@@ -60,8 +64,10 @@ public final class ChainRunner {
         cancel()
         isRunning = true
         result = nil
+        chainResult = nil
         error = nil
         phase = nil
+        partialText = nil
 
         let progress = ChainProgress()
 
@@ -74,9 +80,9 @@ public final class ChainRunner {
                 }
             }()
 
-            let chainResult: Result<String, any Error>
+            let runResult: Result<ChainResult, any Error>
             do {
-                let output = try await chain.run(
+                let output = try await chain.runWithMetadata(
                     text,
                     mapPrompt: mapPrompt,
                     reducePrompt: reducePrompt,
@@ -85,16 +91,17 @@ public final class ChainRunner {
                     options: options,
                     progress: progress
                 )
-                chainResult = .success(output)
+                runResult = .success(output)
             } catch {
-                chainResult = .failure(error)
+                runResult = .failure(error)
             }
 
             _ = await observeProgress
 
-            switch chainResult {
+            switch runResult {
             case .success(let output):
-                self.result = output
+                self.result = output.text
+                self.chainResult = output
             case .failure(let error):
                 self.error = error
             }
@@ -119,6 +126,57 @@ public final class ChainRunner {
             systemPrompt: systemPrompt,
             options: options
         )
+    }
+
+    /// Run a document chain with streaming output.
+    ///
+    /// Partial text is accumulated in ``partialText`` as tokens arrive.
+    /// The final result is available in ``result`` and ``chainResult``.
+    public func runStreaming(
+        _ chain: any DocumentChain,
+        text: String,
+        mapPrompt: String,
+        reducePrompt: String,
+        stuffPrompt: String? = nil,
+        systemPrompt: String? = nil,
+        options: ChainExecutionOptions = ChainExecutionOptions()
+    ) {
+        cancel()
+        isRunning = true
+        result = nil
+        chainResult = nil
+        error = nil
+        phase = nil
+        partialText = ""
+
+        currentTask = Task {
+            do {
+                let stream = chain.stream(
+                    text,
+                    mapPrompt: mapPrompt,
+                    reducePrompt: reducePrompt,
+                    stuffPrompt: stuffPrompt,
+                    systemPrompt: systemPrompt,
+                    options: options,
+                    progress: nil
+                )
+
+                for try await event in stream {
+                    switch event {
+                    case .chunk(let fragment):
+                        self.partialText = (self.partialText ?? "") + fragment
+                    case .progress(let update):
+                        self.phase = update.phase
+                    case .result(let chainResult):
+                        self.result = chainResult.text
+                        self.chainResult = chainResult
+                    }
+                }
+            } catch {
+                self.error = error
+            }
+            self.isRunning = false
+        }
     }
 
     /// Cancel the current chain execution.

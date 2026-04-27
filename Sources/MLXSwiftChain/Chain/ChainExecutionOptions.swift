@@ -32,13 +32,18 @@ public struct ChainExecutionOptions: Sendable, Equatable {
     /// Default is `.none` (no retry), suitable for on-device inference.
     public var retryPolicy: RetryPolicy
 
+    /// How source text is injected into prompts. Default is `.raw` for
+    /// backward compatibility. Use `.delimited` for `<source>` tag wrapping.
+    public var promptStyle: PromptStyle
+
     public init(
         reservedOutputTokens: Int = 512,
         maxReduceGroupSize: Int = 8,
         maxReduceDepth: Int = 5,
         maxConcurrentMapTasks: Int = 1,
         preserveOrder: Bool = true,
-        retryPolicy: RetryPolicy = .none
+        retryPolicy: RetryPolicy = .none,
+        promptStyle: PromptStyle = .raw
     ) {
         self.reservedOutputTokens = reservedOutputTokens
         self.maxReduceGroupSize = maxReduceGroupSize
@@ -46,5 +51,6 @@ public struct ChainExecutionOptions: Sendable, Equatable {
         self.maxConcurrentMapTasks = max(1, maxConcurrentMapTasks)
         self.preserveOrder = preserveOrder
         self.retryPolicy = retryPolicy
+        self.promptStyle = promptStyle
     }
 }

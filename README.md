@@ -12,14 +12,18 @@ Process meeting transcripts, voice notes, Markdown documents, PDF-extracted text
 
 [MLX Swift](https://github.com/ml-explore/mlx-swift) and [MLX Swift LM](https://github.com/ml-explore/mlx-swift-lm) handle model loading and inference. **mlx-swift-chain** handles everything above the model layer:
 
-- **Chunking** — structure-aware splitting for transcripts, documents, logs, and crash reports
+- **Chunking** — structure-aware splitting for transcripts, documents, logs, crash reports, and code-heavy Markdown
 - **Prompt/context budgeting** — token-aware routing that accounts for prompt overhead and reserved output
 - **Map-reduce** — process every chunk through the LLM, then combine results
 - **Hierarchical reduce** — recursive reduction when combined summaries still exceed the context window
+- **Streaming** — token-by-token output via `StreamingLLMBackend` protocol; non-streaming backends work unchanged
+- **Structured JSON extraction** — `runJSON<T: Decodable>(...)` with automatic code-fence stripping and retry
+- **Rich results** — `ChainResult` with source chunks, `ChainMetrics` (timing, call counts, token estimates)
+- **Safe prompt rendering** — opt-in `<source>` tag wrapping with metadata via `ChainPromptBuilder`
 - **Retries and cancellation** — configurable retry policy and cooperative `Task` cancellation
 - **Progress** — `AsyncStream`-based phase reporting (stuffing, mapping N/M, reducing, complete)
 - **Source-grounded outputs** — chunk labels (`[Chunk N]`) and metadata propagate through reduce levels
-- **SwiftUI integration** — `@Observable` `ChainRunner` for reactive progress, result, and error state
+- **SwiftUI integration** — `@Observable` `ChainRunner` with streaming `partialText` support
 
 ## Installation
 
@@ -85,11 +89,14 @@ All templates are accessed via `PromptTemplates.<name>` and work with the `chain
 | `AdaptiveChain` | Auto-selects Stuff or MapReduce based on input length and prompt overhead. **Start here.** |
 | `StuffChain` | Single LLM call when input fits in the context window. |
 | `MapReduceChain` | Chunks, maps each through the LLM, reduces combined results. Supports hierarchical reduce for very large documents. |
+| `ChainResult` | Rich result with `.text`, `.sourceChunks`, and `.metrics`. Returned by `runWithMetadata(...)`. |
+| `ChainMetrics` | Chunk count, map/reduce call counts, elapsed time, estimated tokens, throughput. |
+| `ChainEvent` | Streaming event: `.chunk(String)`, `.progress(Update)`, `.result(ChainResult)`. |
 | `TextChunk` | A chunk of text with word count, index, and metadata. |
 | `TextChunkMetadata` | Source word ranges, timestamps, speaker labels, `DocumentLocation`, `LogMetadata`. |
 | `PromptTemplates` | Pre-built map/reduce/stuff prompt bundles for common workflows. |
-| `ChainRunner` | `@Observable` `@MainActor` class for SwiftUI integration. |
-| `ChainProgress` | `AsyncStream<Update>` with phase info and elapsed time. |
+| `ChainRunner` | `@Observable` `@MainActor` class for SwiftUI integration with streaming support. |
+| `ChainProgress` | `AsyncStream<Update>` with phase info, elapsed time, and optional partial metrics. |
 
 ## Choose a Chunker
 
@@ -101,6 +108,7 @@ All templates are accessed via `PromptTemplates.<name>` and work with the `chain
 | `MarkdownHeadingChunker` | Markdown documents. Splits at headings, preserves structure. Falls back to sentence splitting for large sections. |
 | `LogChunker` | Xcode/simulator logs. Keeps stack traces intact, splits at timestamp boundaries. Classifies chunks by diagnostic kind. |
 | `AppleCrashReportChunker` | Apple crash reports — translated `.crash` text and lightweight grouping for JSON-like `.ips` text. Preserves crashed thread, exception info, and binary images. Detects symbolication status. Does not fully interpret Apple's crash-report JSON schema. |
+| `CodeBlockAwareChunker` | Markdown / code-heavy notes. Splits at paragraph boundaries but never inside fenced code blocks. Oversized code blocks become their own chunk. |
 | `DocumentStructureChunker` | Markdown or PDF-extracted text. Preserves headings, page markers, Markdown-style tables, fenced code blocks, and lists. Populates `DocumentLocation` metadata. PDF parsing and OCR are out of scope — extract text first and preserve page markers when possible. |
 
 All chunkers populate `TextChunkMetadata` with chunk index, source word ranges, discovered timestamps, and speaker labels.
@@ -217,6 +225,114 @@ let actions = try await chain.run(
 // Output includes [Chunk N] references for traceability
 ```
 
+## Token-Accurate Budgeting with MLX
+
+When you have access to the model's tokenizer, use `MLXTokenAwareBackend` for exact token counting instead of word heuristics:
+
+```swift
+import MLXSwiftChain
+import MLXLMCommon
+
+let container: ModelContainer = /* load your model */
+let tokenizer = await container.tokenizer
+
+let backend = MLXTokenAwareBackend(
+    container: container,
+    tokenizer: tokenizer,
+    contextWindowTokens: 8192,
+    generateParameters: GenerateParameters(maxTokens: 1024, temperature: 0.3)
+)
+
+let chain = AdaptiveChain(
+    backend: backend,
+    contextBudget: .tokens(8192)
+)
+
+let summary = try await chain.run(longDocument, template: PromptTemplates.markdownBrief)
+```
+
+Budget calculations (stuff vs. map-reduce routing, chunk sizing, reduce grouping) now use real token counts. `MLXBackend` without a tokenizer continues to work with word heuristics.
+
+## Streaming Output
+
+Stream the final generation output token by token:
+
+```swift
+for try await event in chain.stream(transcript, template: PromptTemplates.transcriptSummary) {
+    switch event {
+    case .chunk(let fragment):
+        print(fragment, terminator: "")  // incremental text
+    case .progress(let update):
+        print("\n[\(update.phase)]")
+    case .result(let chainResult):
+        print("\nDone — \(chainResult.metrics?.elapsedTime ?? .zero)")
+    }
+}
+```
+
+Streaming works with `MLXBackend` and any backend conforming to `StreamingLLMBackend`. Non-streaming backends emit a single `.chunk` with the full text.
+
+## Structured JSON Extraction
+
+Extract typed values from LLM output with automatic JSON repair and retry:
+
+```swift
+struct ActionItem: Decodable {
+    let owner: String
+    let task: String
+    let deadline: String?
+}
+
+let items = try await chain.runJSON(
+    [ActionItem].self,
+    text: meetingNotes,
+    mapPrompt: "Extract action items as a JSON array:",
+    reducePrompt: "Merge into a single JSON array:",
+    options: ChainExecutionOptions(retryPolicy: RetryPolicy(maxAttempts: 2))
+)
+```
+
+Handles markdown code fences, surrounding prose, and nested JSON. On decode failure, retries with an error hint appended to the prompt.
+
+## Rich Results and Metrics
+
+Get source chunks and performance metrics alongside the generated text:
+
+```swift
+let result = try await chain.runWithMetadata(
+    document,
+    template: PromptTemplates.markdownBrief
+)
+
+print(result.text)
+print("Chunks: \(result.sourceChunks.count)")
+if let m = result.metrics {
+    print("Map calls: \(m.mapCallCount), Reduce calls: \(m.reduceCallCount)")
+    print("Elapsed: \(m.elapsedTime)")
+    if let tps = m.tokensPerSecond { print("Throughput: \(tps) tok/s") }
+}
+```
+
+## Safe Prompt Rendering
+
+Opt into `<source>` tag wrapping for better source traceability and reduced prompt injection surface:
+
+```swift
+let options = ChainExecutionOptions(promptStyle: .delimited)
+let summary = try await chain.run(
+    document, template: PromptTemplates.markdownBrief, options: options
+)
+```
+
+In `.delimited` mode, source text is wrapped with metadata:
+```
+<source index="0" of="5" words="0-500" speaker="Alice" time="00:01:00-00:05:30">
+...chunk text...
+</source>
+```
+
+Default is `.raw` (legacy `prompt + text` concatenation) for backward compatibility.
+
 ## SwiftUI Integration
 
 ```swift
@@ -232,6 +348,9 @@ struct SummaryView: View {
                 ProgressView()
                 Text(String(describing: phase))
             }
+            if let partial = runner.partialText, runner.isRunning {
+                ScrollView { Text(partial) }
+            }
             if let result = runner.result {
                 ScrollView { Text(result) }
             }
@@ -239,10 +358,16 @@ struct SummaryView: View {
                 runner.run(chain, text: document,
                           template: PromptTemplates.transcriptSummary)
             }
+            Button("Stream") {
+                runner.runStreaming(chain, text: document,
+                    mapPrompt: "Summarize:", reducePrompt: "Combine:")
+            }
         }
     }
 }
 ```
+
+`ChainRunner` exposes `partialText` for streaming, `chainResult` for metrics and source chunks, and `result` for the final text.
 
 ## Production Options
 
@@ -260,12 +385,17 @@ struct SummaryView: View {
 
 | Option | Type | Purpose |
 |---|---|---|
-| `ChainExecutionOptions` | struct | Bundles concurrency, retry, reduce depth, and output token reservation |
+| `ChainExecutionOptions` | struct | Bundles concurrency, retry, reduce depth, output token reservation, and prompt style |
 | `RetryPolicy` | struct | Max attempts and delay for transient backend failures |
 | `ContextBudget` | enum | `.words(N)` or `.tokens(N)` budget for adaptive routing |
 | `PromptBudgeter` | struct | Checks whether system + task + text + reserved output fits in budget |
+| `PromptStyle` | enum | `.raw` (legacy concatenation) or `.delimited` (`<source>` tag wrapping) |
+| `ChainPromptBuilder` | struct | Centralized prompt rendering with metadata-enriched source tags |
 | `TokenCounter` | protocol | Pluggable token counting; ships with `WordHeuristicTokenCounter` |
 | `TokenAwareBackend` | protocol | Extends `LLMBackend` with context window size and token counter |
+| `MLXTokenCounter` | struct | `TokenCounter` backed by a real MLXLMCommon `Tokenizer` |
+| `MLXTokenAwareBackend` | class | MLX backend with `TokenAwareBackend` + `StreamingLLMBackend` conformance |
+| `StreamingLLMBackend` | protocol | Extends `LLMBackend` with token-by-token streaming |
 | `MemoryPressure` | enum | `.current()` returns `.ok`, `.warning`, or `.critical` based on available memory |
 
 ## Progress Reporting
@@ -301,6 +431,25 @@ For diagnostic workflows, `ChunkPromptFormatter.labeledText(for:)` produces rich
 | XCTest failure | `LogChunker` | `PromptTemplates.testFailureAnalysis` |
 
 Each chunk carries `LogMetadata` with a `LogChunkKind` (e.g. `.crashedThread`, `.swiftCompilerError`, `.testFailure`), process name, severity, and — for crash reports — full `CrashReportMetadata` including exception type, symbolication status, and crashed thread number.
+
+## Performance Guidance for Local MLX Inference
+
+- **`maxConcurrentMapTasks: 1`** (the default) is optimal for on-device MLX inference. Apple Silicon GPUs serialize inference calls, so parallelism adds overhead without throughput benefit.
+- **Increase `maxConcurrentMapTasks`** only for remote or non-GPU-constrained backends.
+- **Streaming** adds minimal overhead — `MLXBackend` uses `ChatSession.streamResponse` internally even for non-streaming `generate()` calls.
+- **Token budgeting** with `MLXTokenAwareBackend` is more accurate but requires resolving the tokenizer at init time (`await container.tokenizer`). Falls back to word heuristics when not available.
+- **`reservedOutputTokens: 512`** is the default. Increase for tasks requiring longer outputs; set to 0 for maximum input budget.
+
+## Versioning Notes
+
+mlx-swift-chain follows semantic versioning. All new APIs introduced in this version are **additive** — existing public types, protocols, and methods are unchanged:
+
+- `LLMBackend`, `TokenAwareBackend`, `DocumentChain`, `TextChunker` protocols — unchanged
+- `StuffChain`, `MapReduceChain`, `AdaptiveChain` — existing `run(...)` signatures unchanged
+- `ChainExecutionOptions` — new fields have defaults that preserve existing behavior
+- `ChainProgress.Update` — new `partialMetrics` field is optional with a nil default
+
+New protocol requirements on `DocumentChain` (`runWithMetadata`, `stream`) have default implementations, so existing conformances compile without changes.
 
 ## Why Not Just Truncate?
 

@@ -250,4 +250,42 @@ extension DocumentChain {
             progress: progress
         )
     }
+
+    /// Stream chain execution using a pre-built prompt template.
+    public func stream(
+        _ text: String,
+        template: ChainPromptTemplate,
+        systemPrompt: String? = nil,
+        options: ChainExecutionOptions = ChainExecutionOptions(),
+        progress: ChainProgress? = nil
+    ) -> AsyncThrowingStream<ChainEvent, Error> {
+        stream(
+            text,
+            mapPrompt: template.mapPrompt,
+            reducePrompt: template.reducePrompt,
+            stuffPrompt: template.stuffPrompt,
+            systemPrompt: systemPrompt,
+            options: options,
+            progress: progress
+        )
+    }
+
+    /// Run the chain using a pre-built prompt template and return rich metadata.
+    public func runWithMetadata(
+        _ text: String,
+        template: ChainPromptTemplate,
+        systemPrompt: String? = nil,
+        options: ChainExecutionOptions = ChainExecutionOptions(),
+        progress: ChainProgress? = nil
+    ) async throws -> ChainResult {
+        try await runWithMetadata(
+            text,
+            mapPrompt: template.mapPrompt,
+            reducePrompt: template.reducePrompt,
+            stuffPrompt: template.stuffPrompt,
+            systemPrompt: systemPrompt,
+            options: options,
+            progress: progress
+        )
+    }
 }
