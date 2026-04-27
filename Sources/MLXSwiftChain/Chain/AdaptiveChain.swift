@@ -54,6 +54,26 @@ public struct AdaptiveChain: DocumentChain {
         options: ChainExecutionOptions,
         progress: ChainProgress?
     ) async throws -> String {
+        try await runWithMetadata(
+            text,
+            mapPrompt: mapPrompt,
+            reducePrompt: reducePrompt,
+            stuffPrompt: stuffPrompt,
+            systemPrompt: systemPrompt,
+            options: options,
+            progress: progress
+        ).text
+    }
+
+    public func stream(
+        _ text: String,
+        mapPrompt: String,
+        reducePrompt: String,
+        stuffPrompt: String?,
+        systemPrompt: String?,
+        options: ChainExecutionOptions,
+        progress: ChainProgress?
+    ) -> AsyncThrowingStream<ChainEvent, Error> {
         let budgeter = PromptBudgeter(backend: backend, budget: contextBudget)
         let taskPrompt = stuffPrompt ?? reducePrompt
 
@@ -66,7 +86,7 @@ public struct AdaptiveChain: DocumentChain {
 
         if fits {
             let stuff = StuffChain(backend: backend)
-            return try await stuff.run(
+            return stuff.stream(
                 text, mapPrompt: mapPrompt, reducePrompt: reducePrompt,
                 stuffPrompt: stuffPrompt, systemPrompt: systemPrompt,
                 options: options, progress: progress
@@ -74,7 +94,43 @@ public struct AdaptiveChain: DocumentChain {
         }
 
         let mapReduce = MapReduceChain(backend: backend, chunker: chunker, contextBudget: contextBudget)
-        return try await mapReduce.run(
+        return mapReduce.stream(
+            text, mapPrompt: mapPrompt, reducePrompt: reducePrompt,
+            stuffPrompt: stuffPrompt, systemPrompt: systemPrompt,
+            options: options, progress: progress
+        )
+    }
+
+    public func runWithMetadata(
+        _ text: String,
+        mapPrompt: String,
+        reducePrompt: String,
+        stuffPrompt: String?,
+        systemPrompt: String?,
+        options: ChainExecutionOptions,
+        progress: ChainProgress?
+    ) async throws -> ChainResult {
+        let budgeter = PromptBudgeter(backend: backend, budget: contextBudget)
+        let taskPrompt = stuffPrompt ?? reducePrompt
+
+        let fits = budgeter.fits(
+            systemPrompt: systemPrompt,
+            taskPrompt: taskPrompt,
+            text: text,
+            reservedOutputTokens: options.reservedOutputTokens
+        )
+
+        if fits {
+            let stuff = StuffChain(backend: backend)
+            return try await stuff.runWithMetadata(
+                text, mapPrompt: mapPrompt, reducePrompt: reducePrompt,
+                stuffPrompt: stuffPrompt, systemPrompt: systemPrompt,
+                options: options, progress: progress
+            )
+        }
+
+        let mapReduce = MapReduceChain(backend: backend, chunker: chunker, contextBudget: contextBudget)
+        return try await mapReduce.runWithMetadata(
             text, mapPrompt: mapPrompt, reducePrompt: reducePrompt,
             stuffPrompt: stuffPrompt, systemPrompt: systemPrompt,
             options: options, progress: progress

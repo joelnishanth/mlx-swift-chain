@@ -503,6 +503,68 @@ struct MapReduceChainTests {
         #expect(reduceCalls >= 4, "Should respect maxReduceGroupSize even with large budget")
     }
 
+    // MARK: - Token-to-word conversion in rechunking
+
+    @Test("Token-mode rechunking converts token budget to conservative word target")
+    func mapReduce_rechunkingConvertsTokenBudgetToWordTarget() async throws {
+        let mock = MockLLMBackend()
+        mock.cannedResponse = "ok"
+
+        // 2:1 token ratio → 1 word ≈ 2 tokens.
+        // Budget 300 tokens, safety margin 128 tokens → available ≈ 300 - 2 - 128 = 170 tokens.
+        // Without conversion: SentenceAwareChunker(targetWords: 170) → ~170-word chunks.
+        // With conversion: 170 tokens / 2.0 = 85 words → ~85-word chunks.
+        let chunker = FixedSizeChunker(maxWords: 200)
+        let chain = MapReduceChain(
+            backend: mock,
+            chunker: chunker,
+            contextBudget: .tokens(300, estimatedTokensPerWord: 2.0)
+        )
+
+        let text = (1...200).map { "Word\($0)." }.joined(separator: " ")
+        let options = ChainExecutionOptions(reservedOutputTokens: 0)
+        _ = try await chain.run(
+            text, mapPrompt: "Map: ",
+            reducePrompt: "Reduce: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: options, progress: nil
+        )
+
+        let mapPrompts = mock.promptsReceived.filter { $0.hasPrefix("Map:") }
+        #expect(mapPrompts.count >= 3, "Token-to-word conversion should produce smaller chunks than raw token count")
+        for prompt in mapPrompts {
+            let wordCount = prompt.split(whereSeparator: \.isWhitespace).count
+            #expect(wordCount <= 110, "Each map prompt should be under ~110 words (85-word target + prompt + formatting)")
+        }
+    }
+
+    @Test("Word-mode rechunking passes word budget directly as word target")
+    func mapReduce_wordBudgetRechunkingStillUsesWordTarget() async throws {
+        let mock = MockLLMBackend()
+        mock.cannedResponse = "ok"
+
+        // Budget 150 words. mapPrompt ~3 words, safety ~96 words → available ≈ 51 words.
+        // Word mode: targetWords = 51 directly (no conversion needed).
+        let chunker = FixedSizeChunker(maxWords: 100)
+        let chain = MapReduceChain(
+            backend: mock,
+            chunker: chunker,
+            contextBudget: .words(150)
+        )
+
+        let text = (1...200).map { "Word\($0)." }.joined(separator: " ")
+        let options = ChainExecutionOptions(reservedOutputTokens: 0)
+        _ = try await chain.run(
+            text, mapPrompt: "Summarize this: ",
+            reducePrompt: "Combine: ",
+            stuffPrompt: nil, systemPrompt: nil,
+            options: options, progress: nil
+        )
+
+        let mapPrompts = mock.promptsReceived.filter { $0.hasPrefix("Summarize") }
+        #expect(mapPrompts.count >= 4, "Word budget should rechunk into several smaller chunks")
+    }
+
     // MARK: - Default reserved output (Issue 6)
 
     @Test("ChainExecutionOptions defaults reservedOutputTokens to 512")

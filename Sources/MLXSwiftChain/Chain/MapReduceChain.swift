@@ -44,6 +44,64 @@ public struct MapReduceChain: DocumentChain {
         options: ChainExecutionOptions,
         progress: ChainProgress?
     ) async throws -> String {
+        try await runWithMetadata(
+            text,
+            mapPrompt: mapPrompt,
+            reducePrompt: reducePrompt,
+            stuffPrompt: stuffPrompt,
+            systemPrompt: systemPrompt,
+            options: options,
+            progress: progress
+        ).text
+    }
+
+    public func stream(
+        _ text: String,
+        mapPrompt: String,
+        reducePrompt: String,
+        stuffPrompt: String?,
+        systemPrompt: String?,
+        options: ChainExecutionOptions,
+        progress: ChainProgress?
+    ) -> AsyncThrowingStream<ChainEvent, Error> {
+        AsyncThrowingStream { continuation in
+            Task {
+                do {
+                    let progressRelay = ChainProgress()
+                    Task {
+                        for await update in progressRelay.updates {
+                            progress?.report(update)
+                            continuation.yield(.progress(update))
+                        }
+                    }
+                    let result = try await runWithMetadata(
+                        text,
+                        mapPrompt: mapPrompt,
+                        reducePrompt: reducePrompt,
+                        stuffPrompt: stuffPrompt,
+                        systemPrompt: systemPrompt,
+                        options: options,
+                        progress: progressRelay
+                    )
+                    continuation.yield(.chunk(result.text))
+                    continuation.yield(.result(result))
+                    continuation.finish()
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+
+    public func runWithMetadata(
+        _ text: String,
+        mapPrompt: String,
+        reducePrompt: String,
+        stuffPrompt: String?,
+        systemPrompt: String?,
+        options: ChainExecutionOptions,
+        progress: ChainProgress?
+    ) async throws -> ChainResult {
         let start = ContinuousClock.now
         defer { progress?.finish() }
 
@@ -51,7 +109,7 @@ public struct MapReduceChain: DocumentChain {
 
         guard !initialChunks.isEmpty else {
             progress?.report(ChainProgress.Update(phase: .complete, elapsedTime: .zero))
-            return ""
+            return ChainResult(text: "", sourceChunks: [], metrics: MetricsAccumulator().finalize(elapsed: .zero))
         }
 
         let chunks = rechunkIfNeeded(
@@ -62,7 +120,9 @@ public struct MapReduceChain: DocumentChain {
             options: options
         )
 
-        // Map phase
+        var acc = MetricsAccumulator()
+        acc.chunkCount = chunks.count
+
         let mapResults: [MapResult]
         if options.maxConcurrentMapTasks > 1 {
             mapResults = try await concurrentMap(
@@ -71,7 +131,8 @@ public struct MapReduceChain: DocumentChain {
                 systemPrompt: systemPrompt,
                 options: options,
                 progress: progress,
-                start: start
+                start: start,
+                acc: &acc
             )
         } else {
             mapResults = try await sequentialMap(
@@ -80,11 +141,11 @@ public struct MapReduceChain: DocumentChain {
                 systemPrompt: systemPrompt,
                 options: options,
                 progress: progress,
-                start: start
+                start: start,
+                acc: &acc
             )
         }
 
-        // Reduce phase (hierarchical when needed)
         let labeledSummaries = mapResults.map { result in
             "[Chunk \(result.chunkIndex + 1)] \(result.text)"
         }
@@ -96,22 +157,22 @@ public struct MapReduceChain: DocumentChain {
             options: options,
             progress: progress,
             start: start,
-            depth: 1
+            depth: 1,
+            acc: &acc
         )
 
         let totalElapsed = ContinuousClock.now - start
         progress?.report(ChainProgress.Update(phase: .complete, elapsedTime: totalElapsed))
-        return finalResult
+
+        return ChainResult(
+            text: finalResult,
+            sourceChunks: chunks,
+            metrics: acc.finalize(elapsed: totalElapsed)
+        )
     }
 
     // MARK: - Budget-Aware Rechunking
 
-    /// Re-chunks text when the user-provided chunker produces chunks that
-    /// exceed the available map budget (context minus prompt overhead,
-    /// reserved output, and safety margin).
-    ///
-    /// Specialized chunker metadata may be reduced for oversized chunks
-    /// that require fallback splitting to prevent prompt overflow.
     private func rechunkIfNeeded(
         _ text: String,
         existingChunks: [TextChunk],
@@ -128,8 +189,34 @@ public struct MapReduceChain: DocumentChain {
         )
         let maxChunkSize = existingChunks.map { budgeter.count($0.text) }.max() ?? 0
         if maxChunkSize <= available { return existingChunks }
-        let fallback = SentenceAwareChunker(targetWords: max(1, available))
+
+        let targetWords = fallbackWordTarget(
+            availableBudgetUnits: available,
+            budget: budget,
+            backend: backend
+        )
+        let fallback = SentenceAwareChunker(targetWords: targetWords)
         return fallback.chunk(text)
+    }
+
+    private func fallbackWordTarget(
+        availableBudgetUnits: Int,
+        budget: ContextBudget,
+        backend: any LLMBackend
+    ) -> Int {
+        switch budget {
+        case .words:
+            return max(1, availableBudgetUnits)
+        case .tokens(_, let estimatedTokensPerWord):
+            let heuristicRatio = max(0.1, estimatedTokensPerWord)
+            let conservativeRatio: Double
+            if backend is any TokenAwareBackend {
+                conservativeRatio = max(heuristicRatio, 1.5)
+            } else {
+                conservativeRatio = heuristicRatio
+            }
+            return max(1, Int(Double(availableBudgetUnits) / conservativeRatio))
+        }
     }
 
     // MARK: - Map Strategies
@@ -140,7 +227,8 @@ public struct MapReduceChain: DocumentChain {
         systemPrompt: String?,
         options: ChainExecutionOptions,
         progress: ChainProgress?,
-        start: ContinuousClock.Instant
+        start: ContinuousClock.Instant,
+        acc: inout MetricsAccumulator
     ) async throws -> [MapResult] {
         var results: [MapResult] = []
         results.reserveCapacity(chunks.count)
@@ -150,10 +238,20 @@ public struct MapReduceChain: DocumentChain {
             let elapsed = ContinuousClock.now - start
             progress?.report(ChainProgress.Update(phase: .mapping(step: i + 1, of: chunks.count), elapsedTime: elapsed))
 
-            let prompt = mapPrompt + chunk.text
+            let prompt = ChainPromptBuilder.mapPrompt(
+                task: mapPrompt, chunk: chunk,
+                totalChunks: chunks.count, style: options.promptStyle
+            )
+            if let tokenBackend = backend as? any TokenAwareBackend {
+                acc.inputTokens += tokenBackend.tokenCounter.countTokens(prompt)
+            }
             let result = try await withRetry(policy: options.retryPolicy) {
                 try await self.backend.generate(prompt: prompt, systemPrompt: systemPrompt)
             }
+            if let tokenBackend = backend as? any TokenAwareBackend {
+                acc.outputTokens += tokenBackend.tokenCounter.countTokens(result)
+            }
+            acc.mapCallCount += 1
             results.append(MapResult(chunkIndex: i, text: result))
         }
         return results
@@ -165,9 +263,14 @@ public struct MapReduceChain: DocumentChain {
         systemPrompt: String?,
         options: ChainExecutionOptions,
         progress: ChainProgress?,
-        start: ContinuousClock.Instant
+        start: ContinuousClock.Instant,
+        acc: inout MetricsAccumulator
     ) async throws -> [MapResult] {
-        try await withThrowingTaskGroup(of: MapResult.self) { group in
+        var localInputTokens = 0
+        var localOutputTokens = 0
+        let tokenBackend = backend as? any TokenAwareBackend
+
+        let results = try await withThrowingTaskGroup(of: MapResult.self) { group in
             var inFlight = 0
             var nextIndex = 0
             var orderedResults = [Int: String]()
@@ -180,7 +283,13 @@ public struct MapReduceChain: DocumentChain {
                 while inFlight < options.maxConcurrentMapTasks && nextIndex < chunks.count {
                     let idx = nextIndex
                     let chunk = chunks[idx]
-                    let prompt = mapPrompt + chunk.text
+                    let prompt = ChainPromptBuilder.mapPrompt(
+                        task: mapPrompt, chunk: chunk,
+                        totalChunks: chunks.count, style: options.promptStyle
+                    )
+                    if let counter = tokenBackend?.tokenCounter {
+                        localInputTokens += counter.countTokens(prompt)
+                    }
                     group.addTask {
                         try Task.checkCancellation()
                         let result = try await withRetry(policy: options.retryPolicy) {
@@ -192,6 +301,9 @@ public struct MapReduceChain: DocumentChain {
                     nextIndex += 1
                 }
                 if let mapResult = try await group.next() {
+                    if let counter = tokenBackend?.tokenCounter {
+                        localOutputTokens += counter.countTokens(mapResult.text)
+                    }
                     orderedResults[mapResult.chunkIndex] = mapResult.text
                     completionOrder.append(mapResult)
                     inFlight -= 1
@@ -207,6 +319,10 @@ public struct MapReduceChain: DocumentChain {
                 return completionOrder
             }
         }
+        acc.mapCallCount += results.count
+        acc.inputTokens += localInputTokens
+        acc.outputTokens += localOutputTokens
+        return results
     }
 
     // MARK: - Hierarchical Reduce
@@ -218,7 +334,8 @@ public struct MapReduceChain: DocumentChain {
         options: ChainExecutionOptions,
         progress: ChainProgress?,
         start: ContinuousClock.Instant,
-        depth: Int
+        depth: Int,
+        acc: inout MetricsAccumulator
     ) async throws -> String {
         guard depth <= options.maxReduceDepth else {
             throw ChainError.reduceDepthExceeded(maxDepth: options.maxReduceDepth)
@@ -235,10 +352,21 @@ public struct MapReduceChain: DocumentChain {
             try Task.checkCancellation()
             let elapsed = ContinuousClock.now - start
             progress?.report(ChainProgress.Update(phase: .reducing, elapsedTime: elapsed))
-            let reduceInput = reducePrompt + combined
-            return try await withRetry(policy: options.retryPolicy) {
+            let reduceInput = ChainPromptBuilder.reducePrompt(
+                task: reducePrompt, summaries: summaries,
+                totalSections: summaries.count, style: options.promptStyle
+            )
+            if let tokenBackend = backend as? any TokenAwareBackend {
+                acc.inputTokens += tokenBackend.tokenCounter.countTokens(reduceInput)
+            }
+            let result = try await withRetry(policy: options.retryPolicy) {
                 try await self.backend.generate(prompt: reduceInput, systemPrompt: systemPrompt)
             }
+            if let tokenBackend = backend as? any TokenAwareBackend {
+                acc.outputTokens += tokenBackend.tokenCounter.countTokens(result)
+            }
+            acc.reduceCallCount += 1
+            return result
         }
 
         let groups = makeReduceGroups(
@@ -256,11 +384,20 @@ public struct MapReduceChain: DocumentChain {
             let elapsed = ContinuousClock.now - start
             progress?.report(ChainProgress.Update(phase: .reducing, elapsedTime: elapsed))
 
-            let groupCombined = formatSummaries(group)
-            let groupPrompt = reducePrompt + groupCombined
+            let groupPrompt = ChainPromptBuilder.reducePrompt(
+                task: reducePrompt, summaries: group,
+                totalSections: group.count, style: options.promptStyle
+            )
+            if let tokenBackend = backend as? any TokenAwareBackend {
+                acc.inputTokens += tokenBackend.tokenCounter.countTokens(groupPrompt)
+            }
             let groupResult = try await withRetry(policy: options.retryPolicy) {
                 try await self.backend.generate(prompt: groupPrompt, systemPrompt: systemPrompt)
             }
+            if let tokenBackend = backend as? any TokenAwareBackend {
+                acc.outputTokens += tokenBackend.tokenCounter.countTokens(groupResult)
+            }
+            acc.reduceCallCount += 1
 
             let firstChunkLabel = extractChunkRange(from: group.first ?? "")
             let lastChunkLabel = extractChunkRange(from: group.last ?? "")
@@ -275,14 +412,13 @@ public struct MapReduceChain: DocumentChain {
             options: options,
             progress: progress,
             start: start,
-            depth: depth + 1
+            depth: depth + 1,
+            acc: &acc
         )
     }
 
     // MARK: - Helpers
 
-    /// Uses `PromptBudgeter` for reduce-fit checks, supporting exact token
-    /// counting when the backend conforms to `TokenAwareBackend`.
     private func fitsInSingleReduce(
         combined: String,
         reducePrompt: String,
@@ -299,10 +435,6 @@ public struct MapReduceChain: DocumentChain {
         )
     }
 
-    /// Groups summaries for hierarchical reduce. When a context budget is
-    /// available, accumulates summaries into a group while the combined
-    /// text fits within budget, capped by `maxReduceGroupSize`. Without a
-    /// budget, uses fixed-size grouping.
     private func makeReduceGroups(
         summaries: [String],
         reducePrompt: String,

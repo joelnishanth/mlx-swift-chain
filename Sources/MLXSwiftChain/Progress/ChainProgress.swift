@@ -12,10 +12,13 @@ public final class ChainProgress: Sendable {
     public struct Update: Sendable {
         public let phase: Phase
         public let elapsedTime: Duration
+        /// Partial metrics snapshot at the time of this update, if available.
+        public let partialMetrics: ChainMetrics?
 
-        public init(phase: Phase, elapsedTime: Duration) {
+        public init(phase: Phase, elapsedTime: Duration, partialMetrics: ChainMetrics? = nil) {
             self.phase = phase
             self.elapsedTime = elapsedTime
+            self.partialMetrics = partialMetrics
         }
     }
 

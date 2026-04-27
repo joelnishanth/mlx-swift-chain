@@ -35,6 +35,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `GenerateParameters` exposed on `MLXBackend` for temperature, maxTokens, topP control.
 - Source-grounded chunk labels (`[Chunk N]`) that propagate through hierarchical reduce levels.
 
+### Added (production-grade upgrade)
+- **Phase 2: Token budgeting** — `MLXTokenCounter` wraps a real `MLXLMCommon.Tokenizer` for exact token counts. `MLXTokenAwareBackend` provides `TokenAwareBackend` + `StreamingLLMBackend` conformance with a resolved tokenizer.
+- **Phase 3: Safe prompt rendering** — `ChainPromptBuilder` centralized prompt builder with `<source>` tag wrapping and metadata attributes. `PromptStyle` enum (`.raw` / `.delimited`) on `ChainExecutionOptions`. Default `.raw` preserves backward compatibility.
+- **Phase 4: Streaming** — `StreamingLLMBackend` protocol with `stream(prompt:systemPrompt:)` method. `MLXBackend` and `MLXTokenAwareBackend` conform via `ChatSession.streamResponse`. `StuffChain` streams token-by-token when backend supports it. `ChainEvent` enum (`.chunk`, `.progress`, `.result`). `stream(...)` method on `DocumentChain` protocol with default implementation. `ChainRunner.partialText` and `runStreaming(...)` for SwiftUI.
+- **Phase 5: Rich results** — `ChainResult` struct with `.text`, `.sourceChunks`, `.metrics`. `runWithMetadata(...)` on `DocumentChain` protocol (with default implementation). All chains build `ChainResult` internally; `run()` wraps `.text`. `ChainRunner.chainResult` property.
+- **Phase 6: Structured JSON** — `runJSON<T: Decodable>(...)` extension on `DocumentChain`. `StructuredOutputError` with `.invalidJSON`, `.schemaMismatch`, `.retriesExhausted`. `JSONRepairHelper` strips code fences and extracts outermost JSON.
+- **Phase 7: Chunkers** — `CodeBlockAwareChunker` for Markdown/code-heavy notes. Splits at paragraph boundaries, never inside fenced code blocks.
+- **Phase 8: Metrics** — `ChainMetrics` struct with chunk count, map/reduce call counts, elapsed time, estimated tokens, and throughput. `MetricsAccumulator` internal builder. `ChainProgress.Update.partialMetrics` optional field.
+- **Phase 9: Tests** — 194 tests total. New test suites: `PublicAPITests`, `StuffChainTests`, `ChainResultTests`, `PromptBuilderTests`, `StreamingTests`, `StructuredOutputTests`, `CodeBlockAwareChunkerTests`, `MetricsTests`. `MockStreamingBackend` and `MockSequentialBackend` added.
+- `DocumentChain` protocol extended with `runWithMetadata(...)` and `stream(...)` requirements (with default implementations — existing conformances unaffected).
+
 ### Added (expert review follow-up)
 - Budget-aware map chunk sizing — `PromptBudgeter.availableTextBudget(...)` and automatic rechunking in `MapReduceChain` when specialized chunkers emit oversized chunks.
 - Token-aware hierarchical reduce — `fitsInSingleReduce` and reduce grouping now use `PromptBudgeter`, including `TokenAwareBackend` when available.
@@ -42,6 +53,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `preserveOrder` option is now functional — `concurrentMap` returns results in completion order when `preserveOrder` is false, preserving correct chunk labels via `MapResult`.
 - `ChunkPromptFormatter` for richer chunk labels using `DiagnosticSourceLabel` metadata.
 - Conservative default `reservedOutputTokens` of 512 in `ChainExecutionOptions`.
+- Token-vs-word conversion in fallback re-chunking — token budgets are divided by a conservative tokens-per-word ratio before invoking `SentenceAwareChunker`.
 
 ### Changed
 - README repositioned around "Swift-native long-document reasoning for private, on-device MLX apps."

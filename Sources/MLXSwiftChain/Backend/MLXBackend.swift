@@ -14,7 +14,7 @@ import MLXLMCommon
 /// protected by `NSLock`. Callers should still treat backend/model execution
 /// as resource-constrained and avoid unnecessary concurrent on-device
 /// generations.
-public final class MLXBackend: LLMBackend, @unchecked Sendable {
+public final class MLXBackend: LLMBackend, StreamingLLMBackend, @unchecked Sendable {
     private let container: ModelContainer
     private let lock = NSLock()
     private var _generateParameters: GenerateParameters
@@ -39,5 +39,15 @@ public final class MLXBackend: LLMBackend, @unchecked Sendable {
             generateParameters: params
         )
         return try await session.respond(to: prompt)
+    }
+
+    public func stream(prompt: String, systemPrompt: String?) -> AsyncThrowingStream<String, Error> {
+        let params = lock.withLock { _generateParameters }
+        let session = ChatSession(
+            container,
+            instructions: systemPrompt,
+            generateParameters: params
+        )
+        return session.streamResponse(to: prompt)
     }
 }
