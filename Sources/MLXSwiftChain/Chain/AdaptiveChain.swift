@@ -1,10 +1,14 @@
 import Foundation
 
 /// Automatically selects between StuffChain and MapReduceChain
-/// based on whether the input text fits within the context budget.
+/// based on whether the input text fits within the context budget,
+/// accounting for prompt overhead and reserved output tokens.
 ///
-/// - If total words <= budget, uses StuffChain (single call).
+/// - If total budget (prompt + text + reserved output) fits, uses StuffChain.
 /// - Otherwise, uses MapReduceChain to process in chunks.
+///
+/// When the backend conforms to `TokenAwareBackend`, budget checks use
+/// real token counts. Otherwise, word heuristics are used as a fallback.
 public struct AdaptiveChain: DocumentChain {
     public let backend: any LLMBackend
     public let chunker: any TextChunker
@@ -45,17 +49,35 @@ public struct AdaptiveChain: DocumentChain {
         _ text: String,
         mapPrompt: String,
         reducePrompt: String,
+        stuffPrompt: String?,
         systemPrompt: String?,
+        options: ChainExecutionOptions,
         progress: ChainProgress?
     ) async throws -> String {
-        let wordCount = text.split(whereSeparator: \.isWhitespace).count
+        let budgeter = PromptBudgeter(backend: backend, budget: contextBudget)
+        let taskPrompt = stuffPrompt ?? reducePrompt
 
-        if wordCount <= contextBudget.estimatedWordLimit {
+        let fits = budgeter.fits(
+            systemPrompt: systemPrompt,
+            taskPrompt: taskPrompt,
+            text: text,
+            reservedOutputTokens: options.reservedOutputTokens
+        )
+
+        if fits {
             let stuff = StuffChain(backend: backend)
-            return try await stuff.run(text, mapPrompt: mapPrompt, reducePrompt: reducePrompt, systemPrompt: systemPrompt, progress: progress)
+            return try await stuff.run(
+                text, mapPrompt: mapPrompt, reducePrompt: reducePrompt,
+                stuffPrompt: stuffPrompt, systemPrompt: systemPrompt,
+                options: options, progress: progress
+            )
         }
 
-        let mapReduce = MapReduceChain(backend: backend, chunker: chunker)
-        return try await mapReduce.run(text, mapPrompt: mapPrompt, reducePrompt: reducePrompt, systemPrompt: systemPrompt, progress: progress)
+        let mapReduce = MapReduceChain(backend: backend, chunker: chunker, contextBudget: contextBudget)
+        return try await mapReduce.run(
+            text, mapPrompt: mapPrompt, reducePrompt: reducePrompt,
+            stuffPrompt: stuffPrompt, systemPrompt: systemPrompt,
+            options: options, progress: progress
+        )
     }
 }
