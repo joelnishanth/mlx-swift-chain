@@ -70,6 +70,7 @@ public struct MapReduceChain: DocumentChain {
                     let progressRelay = ChainProgress()
                     Task {
                         for await update in progressRelay.updates {
+                            progress?.report(update)
                             continuation.yield(.progress(update))
                         }
                     }
@@ -265,6 +266,10 @@ public struct MapReduceChain: DocumentChain {
         start: ContinuousClock.Instant,
         acc: inout MetricsAccumulator
     ) async throws -> [MapResult] {
+        var localInputTokens = 0
+        var localOutputTokens = 0
+        let tokenBackend = backend as? any TokenAwareBackend
+
         let results = try await withThrowingTaskGroup(of: MapResult.self) { group in
             var inFlight = 0
             var nextIndex = 0
@@ -282,6 +287,9 @@ public struct MapReduceChain: DocumentChain {
                         task: mapPrompt, chunk: chunk,
                         totalChunks: chunks.count, style: options.promptStyle
                     )
+                    if let counter = tokenBackend?.tokenCounter {
+                        localInputTokens += counter.countTokens(prompt)
+                    }
                     group.addTask {
                         try Task.checkCancellation()
                         let result = try await withRetry(policy: options.retryPolicy) {
@@ -293,6 +301,9 @@ public struct MapReduceChain: DocumentChain {
                     nextIndex += 1
                 }
                 if let mapResult = try await group.next() {
+                    if let counter = tokenBackend?.tokenCounter {
+                        localOutputTokens += counter.countTokens(mapResult.text)
+                    }
                     orderedResults[mapResult.chunkIndex] = mapResult.text
                     completionOrder.append(mapResult)
                     inFlight -= 1
@@ -309,6 +320,8 @@ public struct MapReduceChain: DocumentChain {
             }
         }
         acc.mapCallCount += results.count
+        acc.inputTokens += localInputTokens
+        acc.outputTokens += localOutputTokens
         return results
     }
 
