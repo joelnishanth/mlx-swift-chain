@@ -89,6 +89,146 @@ public enum PromptTemplates {
             and key points from each section.\n\n
             """
     )
+
+    /// Summarize a single-speaker voice note, solo brainstorm, or founder memo.
+    public static let voiceNoteSummary = ChainPromptTemplate(
+        mapPrompt: """
+            Summarize this section of a voice note. Preserve key timestamps, topics, \
+            decisions, open questions, and important details. \
+            Reference the section label at the top.\n\n
+            """,
+        reducePrompt: """
+            Combine these voice note section summaries into a coherent summary \
+            organized by topic. Cite [Chunk N] labels when referencing specific sections. \
+            Preserve important timestamps for verification.\n\n
+            """,
+        stuffPrompt: """
+            Summarize this voice note. Organize by topic. Preserve key timestamps, \
+            decisions, open questions, and important details.\n\n
+            """
+    )
+
+    /// Create a structured brief from a lecture, course segment, or talk.
+    public static let lectureBrief = ChainPromptTemplate(
+        mapPrompt: """
+            Extract key concepts, definitions, examples, claims, and timestamps \
+            from this lecture section. Reference the section label at the top.\n\n
+            """,
+        reducePrompt: """
+            Organize these lecture section notes into a structured lecture brief \
+            with key takeaways, concepts, examples, and review questions. \
+            Cite [Chunk N] for each section.\n\n
+            """,
+        stuffPrompt: """
+            Create a structured lecture brief from this transcript. Include key \
+            concepts, definitions, examples, and review questions.\n\n
+            """
+    )
+
+    /// Triage an Apple crash report (.crash / .ips / Console paste).
+    public static let appleCrashTriage = ChainPromptTemplate(
+        mapPrompt: """
+            Analyze this Apple crash report section. Extract exception type, \
+            termination reason, crashed thread clues, suspicious app frames, \
+            diagnostic messages, symbolication quality, memory access clues, \
+            and source chunk IDs. Do not invent missing details.\n\n
+            """,
+        reducePrompt: """
+            Create a concise Apple crash triage report. Include likely root cause, \
+            crash mechanism, exception type, termination reason, crashed thread, \
+            relevant app frames, symbolication warning if needed, recommended Xcode \
+            debugging tools, next steps, and source chunk IDs. \
+            For EXC_BAD_ACCESS, SIGSEGV, or SIGBUS, consider Address Sanitizer and \
+            Malloc debugging tools. For threading issues, consider Thread Sanitizer or \
+            Main Thread Checker. If the report is unsymbolicated or partially \
+            symbolicated, note that strong conclusions may be unreliable and recommend \
+            dSYM verification. Do not claim certainty when evidence is incomplete. \
+            If evidence is insufficient, say what is missing.\n\n
+            """,
+        stuffPrompt: """
+            Triage this Apple crash report. Identify the likely root cause, crash \
+            mechanism (exception type, termination reason, crashed thread), suspicious \
+            app frames, symbolication quality, and recommended next debugging steps. \
+            For EXC_BAD_ACCESS, SIGSEGV, or SIGBUS, consider Address Sanitizer and \
+            Malloc debugging tools. For threading issues, consider Thread Sanitizer or \
+            Main Thread Checker. If the report is unsymbolicated or partially \
+            symbolicated, note that strong conclusions may be unreliable and recommend \
+            dSYM verification. Do not claim certainty when evidence is incomplete.\n\n
+            """
+    )
+
+    /// Root-cause analysis for simulator or Console.app logs.
+    public static let simulatorLogRootCause = ChainPromptTemplate(
+        mapPrompt: """
+            Analyze this simulator or Console log section. Extract errors, warnings, \
+            timestamps, process, subsystem, category, repeated patterns, and likely \
+            failure signals. Preserve source chunk IDs.\n\n
+            """,
+        reducePrompt: """
+            Create a root-cause hypothesis from these simulator logs. Group by process \
+            or subsystem, identify the first meaningful error, repeated failures, likely \
+            cause, and next debugging steps. Preserve source chunk IDs.\n\n
+            """,
+        stuffPrompt: """
+            Analyze these simulator or Console logs. Identify the first meaningful error, \
+            group by process or subsystem, find repeated patterns, determine the likely \
+            root cause, and suggest next debugging steps.\n\n
+            """
+    )
+
+    /// Diagnose Xcode build failures (compiler, linker, signing).
+    public static let xcodeBuildFailure = ChainPromptTemplate(
+        mapPrompt: """
+            Analyze this Xcode build section. Extract compiler errors, linker errors, \
+            failing files, line numbers, commands, missing dependencies, signing issues, \
+            and source chunk IDs.\n\n
+            """,
+        reducePrompt: """
+            Create a build failure diagnosis. Include primary error, affected files, \
+            likely cause, fix suggestions, and source chunk IDs. Do not over-index on \
+            secondary cascading errors.\n\n
+            """,
+        stuffPrompt: """
+            Diagnose this Xcode build failure. Identify the primary error, affected \
+            files, likely cause, and fix suggestions. Ignore secondary cascading errors \
+            when a single root cause is apparent.\n\n
+            """
+    )
+
+    /// Analyze XCTest failures with assertion details and reproduction notes.
+    public static let testFailureAnalysis = ChainPromptTemplate(
+        mapPrompt: """
+            Analyze this test failure section. Extract failing test names, assertions, \
+            expected and actual values, file and line references, logs, and source \
+            chunk IDs.\n\n
+            """,
+        reducePrompt: """
+            Create a test failure analysis. Include failing tests, assertion mismatches, \
+            likely cause, reproduction notes, and next debugging steps. Preserve source \
+            chunk IDs.\n\n
+            """,
+        stuffPrompt: """
+            Analyze these test failures. List failing tests with assertion mismatches, \
+            identify the likely cause, and suggest reproduction and debugging steps.\n\n
+            """
+    )
+
+    /// Extract tasks and actions from a personal memo or to-do capture.
+    public static let personalMemoActions = ChainPromptTemplate(
+        mapPrompt: """
+            Extract tasks, reminders, ideas, decisions, deadlines, people, and \
+            follow-ups from this memo section. Reference the section label at the top.\n\n
+            """,
+        reducePrompt: """
+            Merge these memo notes into a prioritized action list and a concise list \
+            of key ideas. Deduplicate repeated actions and preserve timestamps where \
+            useful. Cite [Chunk N] for each item's source.\n\n
+            """,
+        stuffPrompt: """
+            Extract all tasks, reminders, ideas, decisions, and follow-ups from this \
+            memo. Organize into a prioritized action list and key ideas.\n\n
+            """
+    )
 }
 
 extension DocumentChain {
