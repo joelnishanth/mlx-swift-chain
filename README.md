@@ -4,31 +4,22 @@
 
 **Swift-native long-document reasoning for private, on-device MLX apps.**
 
-Process documents that exceed your model's context window using map-reduce, stuff, and adaptive chain strategies — built for local inference on Apple Silicon.
+Long-document chunking, map-reduce, prompt budgeting, and source-grounded summarization for MLX Swift apps on macOS and iOS.
 
-## How This Fits
+Process meeting transcripts, voice notes, Markdown/PDF-extracted docs, Xcode logs, crash reports, and field manuals locally on macOS and iOS using MLX Swift-compatible backends.
 
-[MLX Swift](https://github.com/ml-explore/mlx-swift) and [MLX Swift LM](https://github.com/ml-explore/mlx-swift-lm) handle model loading and inference. **mlx-swift-chain** handles everything above the model layer: chunking, token/context budgeting, map-reduce orchestration, hierarchical reduce, progress reporting, and source-aware long-document outputs. This is not a full RAG framework or LangChain clone — it solves one problem well: reasoning over documents that don't fit in a single context window.
+## Why This Exists
 
-## Target Use Cases
+[MLX Swift](https://github.com/ml-explore/mlx-swift) and [MLX Swift LM](https://github.com/ml-explore/mlx-swift-lm) handle model loading and inference. **mlx-swift-chain** handles everything above the model layer:
 
-- **Meeting transcript summarization** — speaker-aware chunking preserves who said what
-- **Markdown / PDF document summarization** — heading-aware chunking respects document structure
-- **Xcode and simulator log analysis** — stack-trace-aware chunking keeps crash reports intact
-- **Offline field manuals / emergency docs** — process long reference material entirely on-device
-
-## The Problem
-
-Local LLMs have limited context windows (e.g. 8,192 tokens for Gemma models). Long documents — research papers, legal contracts, codebases, transcripts — easily exceed this limit. Naive prefix truncation discards most of the content:
-
-| Document Size | Prefix Truncation Coverage | mlx-swift-chain Model-Visible Coverage |
-|---|---|---|
-| ~2,500 words | 100% | 100% |
-| ~5,000 words | ~60% | **100%** |
-| ~10,000 words | ~30% | **100%** |
-| ~20,000 words | **7%** | **100%** |
-
-Coverage here means input/model-visible coverage across chunks, not guaranteed perfect retention in the final reduced answer.
+- **Chunking** — structure-aware splitting for transcripts, documents, logs, and crash reports
+- **Prompt/context budgeting** — token-aware routing that accounts for prompt overhead and reserved output
+- **Map-reduce** — process every chunk through the LLM, then combine results
+- **Hierarchical reduce** — recursive reduction when combined summaries still exceed the context window
+- **Retries and cancellation** — configurable retry policy and cooperative `Task` cancellation
+- **Progress** — `AsyncStream`-based phase reporting (stuffing, mapping N/M, reducing, complete)
+- **Source-grounded outputs** — chunk labels (`[Chunk N]`) and metadata propagate through reduce levels
+- **SwiftUI integration** — `@Observable` `ChainRunner` for reactive progress, result, and error state
 
 ## Installation
 
@@ -50,48 +41,55 @@ targets: [
 
 ## Quick Start
 
-### 1. Set up your backend
-
-Use the built-in `MLXBackend` or conform your own service to `LLMBackend`:
-
 ```swift
 import MLXSwiftChain
 import MLXLMCommon
 
+// 1. Set up a backend
 let backend = MLXBackend(
     container: modelContainer,
     generateParameters: GenerateParameters(maxTokens: 1024, temperature: 0.3)
 )
-```
 
-### 2. Summarize a document
+// 2. Create an adaptive chain with a domain chunker
+let chain = AdaptiveChain(
+    backend: backend,
+    contextBudget: .tokens(4096),
+    chunker: TranscriptChunker(targetWords: 800, overlapTurns: 1)
+)
 
-```swift
-let chain = AdaptiveChain(backend: backend, contextBudget: .tokens(4096))
-
+// 3. Run with a prompt template
 let summary = try await chain.run(
-    document,
-    mapPrompt: "Summarize this section concisely:\n\n",
-    reducePrompt: "Combine these summaries into a coherent summary:\n\n",
-    systemPrompt: "You are a helpful assistant."
+    transcript, template: PromptTemplates.transcriptSummary
 )
 ```
 
 For short texts, `AdaptiveChain` uses a single LLM call (zero overhead). For long texts, it automatically chunks the input, maps each chunk through the LLM, and reduces the results.
 
-### 3. Or use a prompt template
+## Choose Your Workflow
 
-```swift
-let summary = try await chain.run(document, template: PromptTemplates.transcriptSummary)
-```
+| Use Case | Chunker | Templates | Value |
+|---|---|---|---|
+| Meeting transcript / voice note | `TranscriptChunker` | `transcriptSummary`, `actionItems`, `voiceNoteSummary`, `personalMemoActions` | Speaker/temporal/topic attribution preserves who said what and when |
+| Markdown / PDF-extracted docs | `DocumentStructureChunker` or `MarkdownHeadingChunker` | `markdownBrief`, `documentExecutiveSummary`, `documentStudyGuide` | Heading/page/source-aware summaries with `DocumentLocation` metadata |
+| Xcode / simulator / crash logs | `LogChunker` or `AppleCrashReportChunker` | `logRootCause`, `appleCrashTriage`, `xcodeBuildFailure`, `testFailureAnalysis` | Source-grounded private developer triage with diagnostic classification |
+| Offline field manuals / emergency docs | `DocumentStructureChunker` | `markdownBrief`, `documentExecutiveSummary` | On-device reference material processing with page/section tracking |
+| Generic prose | `SentenceAwareChunker` | Custom prompt | Safe fallback for any text |
 
-## Choose a Chain
+All templates are accessed via `PromptTemplates.<name>` and work with the `chain.run(_:template:)` convenience.
 
-| Chain | When to Use |
+## Core Concepts
+
+| Type | Role |
 |---|---|
-| `StuffChain` | Input fits in context window. Single LLM call. |
-| `MapReduceChain` | Input exceeds context. Chunks, maps each, reduces combined. Supports hierarchical reduce for very large documents. |
 | `AdaptiveChain` | Auto-selects Stuff or MapReduce based on input length and prompt overhead. **Start here.** |
+| `StuffChain` | Single LLM call when input fits in the context window. |
+| `MapReduceChain` | Chunks, maps each through the LLM, reduces combined results. Supports hierarchical reduce for very large documents. |
+| `TextChunk` | A chunk of text with word count, index, and metadata. |
+| `TextChunkMetadata` | Source word ranges, timestamps, speaker labels, `DocumentLocation`, `LogMetadata`. |
+| `PromptTemplates` | Pre-built map/reduce/stuff prompt bundles for common workflows. |
+| `ChainRunner` | `@Observable` `@MainActor` class for SwiftUI integration. |
+| `ChainProgress` | `AsyncStream<Update>` with phase info and elapsed time. |
 
 ## Choose a Chunker
 
@@ -99,9 +97,11 @@ let summary = try await chain.run(document, template: PromptTemplates.transcript
 |---|---|
 | `SentenceAwareChunker` | General text. Splits at sentence boundaries. **Default.** |
 | `FixedSizeChunker` | Uniform chunks by word count with optional overlap. |
-| `TranscriptChunker` | Meeting transcripts and voice notes. Splits at speaker turns, preserves labels and timestamps. |
+| `TranscriptChunker` | Meeting transcripts, voice notes, lectures, and memos. Auto-selects speaker, temporal, or topical attribution. |
 | `MarkdownHeadingChunker` | Markdown documents. Splits at headings, preserves structure. Falls back to sentence splitting for large sections. |
-| `LogChunker` | Xcode/simulator logs. Keeps stack traces intact, splits at timestamp boundaries. |
+| `LogChunker` | Xcode/simulator logs. Keeps stack traces intact, splits at timestamp boundaries. Classifies chunks by diagnostic kind. |
+| `AppleCrashReportChunker` | Apple crash reports (`.crash` / `.ips`). Preserves crashed thread, exception info, and binary images. Detects symbolication status. |
+| `DocumentStructureChunker` | Markdown or PDF-extracted documents. Preserves headings, page ranges, tables, and code blocks. Populates `DocumentLocation` metadata. |
 
 All chunkers populate `TextChunkMetadata` with chunk index, source word ranges, discovered timestamps, and speaker labels.
 
@@ -121,6 +121,36 @@ let summary = try await chain.run(
 )
 ```
 
+**Summarize a voice note:**
+
+```swift
+let chain = AdaptiveChain(
+    backend: backend,
+    contextBudget: .tokens(4096),
+    chunker: TranscriptChunker(targetWords: 800)
+)
+
+let summary = try await chain.run(
+    voiceNote, template: PromptTemplates.voiceNoteSummary
+)
+```
+
+**Extract actions from a personal memo:**
+
+```swift
+let chain = AdaptiveChain(
+    backend: backend,
+    contextBudget: .tokens(4096),
+    chunker: TranscriptChunker(targetWords: 800, attributionMode: .temporal)
+)
+
+let actions = try await chain.run(
+    memo, template: PromptTemplates.personalMemoActions
+)
+```
+
+`TranscriptChunker` supports adaptive attribution. Multi-speaker meetings use speaker-turn attribution, preserving who said what. Single-speaker voice notes and lectures use timestamp or topic attribution to avoid repetitive "Speaker 1" labels while preserving source grounding. Use `TranscriptAttributionMode.auto` (the default) to let the chunker select the best strategy, or force a specific mode when you know your input format.
+
 **Analyze Xcode logs for root cause:**
 
 ```swift
@@ -132,6 +162,20 @@ let chain = AdaptiveChain(
 
 let analysis = try await chain.run(
     logOutput, template: PromptTemplates.logRootCause
+)
+```
+
+**Triage an Apple crash report:**
+
+```swift
+let chain = AdaptiveChain(
+    backend: backend,
+    contextBudget: .tokens(8192),
+    chunker: AppleCrashReportChunker(targetWords: 1200)
+)
+
+let triage = try await chain.run(
+    crashReportText, template: PromptTemplates.appleCrashTriage
 )
 ```
 
@@ -147,6 +191,21 @@ let chain = AdaptiveChain(
 let brief = try await chain.run(
     markdownDoc, template: PromptTemplates.markdownBrief
 )
+```
+
+**Summarize a PDF-extracted document with page tracking:**
+
+```swift
+let chain = AdaptiveChain(
+    backend: backend,
+    contextBudget: .tokens(4096),
+    chunker: DocumentStructureChunker(targetWords: 1200, preserveTables: true)
+)
+
+let summary = try await chain.run(
+    pdfExtractedText, template: PromptTemplates.markdownBrief
+)
+// Each chunk's metadata.documentLocation includes pageRange, headingPath, and blockTypes
 ```
 
 **Extract action items with source citations:**
@@ -197,6 +256,16 @@ struct SummaryView: View {
 
 **Memory awareness:** `MemoryPressure.current()` checks available memory before inference — critical for iOS where jetsam kills memory-hungry processes.
 
+| Option | Type | Purpose |
+|---|---|---|
+| `ChainExecutionOptions` | struct | Bundles concurrency, retry, reduce depth, and output token reservation |
+| `RetryPolicy` | struct | Max attempts and delay for transient backend failures |
+| `ContextBudget` | enum | `.words(N)` or `.tokens(N)` budget for adaptive routing |
+| `PromptBudgeter` | struct | Checks whether system + task + text + reserved output fits in budget |
+| `TokenCounter` | protocol | Pluggable token counting; ships with `WordHeuristicTokenCounter` |
+| `TokenAwareBackend` | protocol | Extends `LLMBackend` with context window size and token counter |
+| `MemoryPressure` | enum | `.current()` returns `.ok`, `.warning`, or `.critical` based on available memory |
+
 ## Progress Reporting
 
 ```swift
@@ -216,6 +285,50 @@ Task {
 let result = try await chain.run(text, mapPrompt: "...", reducePrompt: "...", progress: progress)
 ```
 
+## Diagnostic Log Analysis
+
+mlx-swift-chain can chunk and summarize long diagnostic logs entirely on-device. Use `AppleCrashReportChunker` for `.crash` or `.ips` text, and `LogChunker` for simulator logs, Xcode build output, and test failures.
+
+| Input | Chunker | Prompt Template |
+|---|---|---|
+| Apple crash report (`.crash` / `.ips`) | `AppleCrashReportChunker` | `PromptTemplates.appleCrashTriage` |
+| Simulator / Console.app logs | `LogChunker` | `PromptTemplates.simulatorLogRootCause` |
+| Xcode build failure | `LogChunker` | `PromptTemplates.xcodeBuildFailure` |
+| XCTest failure | `LogChunker` | `PromptTemplates.testFailureAnalysis` |
+
+Each chunk carries `LogMetadata` with a `LogChunkKind` (e.g. `.crashedThread`, `.swiftCompilerError`, `.testFailure`), process name, severity, and — for crash reports — full `CrashReportMetadata` including exception type, symbolication status, and crashed thread number.
+
+## Why Not Just Truncate?
+
+Local LLMs have limited context windows (e.g. 8,192 tokens for Gemma models). Long documents — research papers, legal contracts, codebases, transcripts — easily exceed this limit. Naive prefix truncation discards most of the content:
+
+| Document Size | Prefix Truncation Coverage | mlx-swift-chain Model-Visible Coverage |
+|---|---|---|
+| ~2,500 words | 100% | 100% |
+| ~5,000 words | ~60% | **100%** |
+| ~10,000 words | ~30% | **100%** |
+| ~20,000 words | **7%** | **100%** |
+
+Coverage here means input/model-visible coverage across chunks, not guaranteed perfect retention in the final reduced answer.
+
+- **Truncation loses evidence.** A crash report's root cause may be on page 5. A contract's liability clause may be in the appendix. Truncation throws it away.
+- **Map-reduce improves coverage.** Every chunk is processed by the LLM. Nothing is silently dropped.
+- **Hierarchical reduce prevents overflow.** When combined summaries still exceed the context window, recursive grouping and reduction keeps the final prompt within budget.
+- **Source labels help verification.** `[Chunk N]` references let users trace claims back to the original text.
+
+## Why Not a Generic LangChain?
+
+- **Apple-native Swift package.** No Python bridge, no HTTP overhead, no serialization layer. Just Swift protocols and structured concurrency.
+- **MLX-first / local-backend-first.** Designed for on-device inference on Apple Silicon with `MLXBackend`, not cloud API wrappers.
+- **Offline and private.** All processing can stay on-device. No telemetry, no network calls unless your backend makes them.
+- **SwiftUI-ready progress.** `ChainRunner` is `@Observable` and `@MainActor` — drop it into a SwiftUI view.
+- **Domain chunkers.** Purpose-built for transcripts, documents, logs, and crash reports — not generic text splitting.
+- **One problem, solved well.** This is not a framework for agents, tool use, vector stores, or retrieval. It handles long-document reasoning above the model layer.
+
+## Privacy
+
+MLX Swift Chain analyzes user-provided text. It does not acquire logs, read files, call Xcode APIs, or transmit data by itself. Whether inference stays local depends on the backend you provide.
+
 ## Architecture
 
 See [docs/architecture.md](docs/architecture.md) for the component graph and [docs/data-flow.md](docs/data-flow.md) for the map-reduce sequence diagram.
@@ -225,6 +338,15 @@ See [docs/architecture.md](docs/architecture.md) for the component graph and [do
 - macOS 14.0+ / iOS 17.0+
 - Swift 6.1+
 - [mlx-swift-lm](https://github.com/ml-explore/mlx-swift-lm) 3.31.3+
+
+## Links
+
+- [CHANGELOG](CHANGELOG.md)
+- [Contributing](CONTRIBUTING.md)
+- [Architecture](docs/architecture.md)
+- [Data Flow](docs/data-flow.md)
+- [Diagnostic Log Analysis Review](docs/diagnostic-log-analysis-review.md)
+- [Tests](Tests/MLXSwiftChainTests/)
 
 ## License
 
