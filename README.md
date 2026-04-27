@@ -246,7 +246,7 @@ struct SummaryView: View {
 
 ## Production Options
 
-**Token budgeting:** `AdaptiveChain` accounts for system prompt, task prompt, input text, and reserved output tokens when deciding stuff vs. map-reduce routing. Backends conforming to `TokenAwareBackend` enable exact token counting. Map chunks are also budget-aware — if a specialized chunker emits oversized chunks, they are automatically re-split to fit within the map prompt budget.
+**Token budgeting:** `AdaptiveChain` accounts for system prompt, task prompt, input text, and reserved output tokens when deciding stuff vs. map-reduce routing. Backends conforming to `TokenAwareBackend` enable exact token counting. Map chunks are also budget-aware — if a specialized chunker emits oversized chunks, they are automatically re-split to fit within the map prompt budget. Fallback re-chunking converts token budgets into conservative word targets before using word-based chunkers.
 
 **Hierarchical reduce:** When `MapReduceChain` is initialized with a `contextBudget`, it automatically groups and recursively reduces summaries that exceed the budget, preventing context overflow on large documents. Reduce-fit checks use `PromptBudgeter` (including `TokenAwareBackend` when available), and group sizes are budget-derived up to the `maxReduceGroupSize` cap.
 

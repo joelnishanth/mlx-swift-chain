@@ -110,6 +110,10 @@ public struct MapReduceChain: DocumentChain {
     /// exceed the available map budget (context minus prompt overhead,
     /// reserved output, and safety margin).
     ///
+    /// `availableTextBudget` may return tokens or words depending on the
+    /// budgeter's counting mode. Fallback chunkers split by words, so
+    /// token budgets are converted to a conservative word target first.
+    ///
     /// Specialized chunker metadata may be reduced for oversized chunks
     /// that require fallback splitting to prevent prompt overflow.
     private func rechunkIfNeeded(
@@ -128,8 +132,38 @@ public struct MapReduceChain: DocumentChain {
         )
         let maxChunkSize = existingChunks.map { budgeter.count($0.text) }.max() ?? 0
         if maxChunkSize <= available { return existingChunks }
-        let fallback = SentenceAwareChunker(targetWords: max(1, available))
+
+        let targetWords = fallbackWordTarget(
+            availableBudgetUnits: available,
+            budget: budget,
+            backend: backend
+        )
+        let fallback = SentenceAwareChunker(targetWords: targetWords)
         return fallback.chunk(text)
+    }
+
+    /// Converts available budget units into a safe word target for
+    /// `SentenceAwareChunker`. Word budgets pass through directly;
+    /// token budgets are divided by a conservative tokens-per-word ratio
+    /// so that the resulting word-sized chunks stay within the token limit.
+    private func fallbackWordTarget(
+        availableBudgetUnits: Int,
+        budget: ContextBudget,
+        backend: any LLMBackend
+    ) -> Int {
+        switch budget {
+        case .words:
+            return max(1, availableBudgetUnits)
+        case .tokens(_, let estimatedTokensPerWord):
+            let heuristicRatio = max(0.1, estimatedTokensPerWord)
+            let conservativeRatio: Double
+            if backend is any TokenAwareBackend {
+                conservativeRatio = max(heuristicRatio, 1.5)
+            } else {
+                conservativeRatio = heuristicRatio
+            }
+            return max(1, Int(Double(availableBudgetUnits) / conservativeRatio))
+        }
     }
 
     // MARK: - Map Strategies

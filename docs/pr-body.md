@@ -56,7 +56,7 @@ MLX Swift and MLX Swift LM provide the model/runtime layer. This package now pro
 | Logs/crash | Generic log chunking | Diagnostic classification and crash-report support | Strong developer adoption wedge |
 | SwiftUI | Manual integration | Reactive `ChainRunner` | Easier app adoption |
 | Prompts | Few generic templates | 11 domain-specific templates | Faster time-to-value |
-| Tests | ~30 tests | 105 tests | 3.5x coverage increase |
+| Tests | ~30 tests | 107 tests | 3.5x coverage increase |
 | Docs | Basic package docs | Adoption-focused README and docs | Easier for MLX/Swift developers to understand |
 
 ## Follow-up fixes from expert review
@@ -69,15 +69,16 @@ MLX Swift and MLX Swift LM provide the model/runtime layer. This package now pro
 - README wording now accurately frames PDF-extracted text and `.ips` support.
 - Added `ChunkPromptFormatter` for richer diagnostic chunk labels.
 - `MLXBackend` `@unchecked Sendable` comment now precisely describes lock protection.
+- Token-mode fallback re-chunking now converts available token budget into a conservative word target before invoking `SentenceAwareChunker`.
 
 ## Validation
 
 - [x] `swift package resolve`
 - [x] `swift build` — 0 errors, 0 warnings
-- [x] `swift test` — 105 tests, 0 failures
+- [x] `swift test` — 107 tests, 0 failures
 
 Final local status:
-- Tests passing: 105
+- Tests passing: 107
 - Warnings: 0 (2 pre-existing in test files)
 
 ## Compatibility

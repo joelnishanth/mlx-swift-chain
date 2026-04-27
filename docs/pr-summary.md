@@ -91,7 +91,7 @@ Local/offline workflows need deterministic chunking, budgeting, progress, retrie
 ```
 swift package resolve   # resolves mlx-swift-lm dependency
 swift build             # 0 errors, 0 warnings
-swift test              # 105 tests, 0 failures
+swift test              # 107 tests, 0 failures
 ```
 
 **Test coverage by area:**
@@ -99,7 +99,7 @@ swift test              # 105 tests, 0 failures
 | Area | Tests | Suite |
 |---|---|---|
 | Chain routing (stuff vs map-reduce) | 13 | AdaptiveChainTests |
-| Map-reduce, hierarchical reduce, concurrency, budgeting | 22 | MapReduceChainTests |
+| Map-reduce, hierarchical reduce, concurrency, budgeting | 24 | MapReduceChainTests |
 | Retry policy | 3 | RetryTests |
 | Benchmark coverage | 1 | BenchmarkCoverageTests |
 | FixedSize, SentenceAware, Transcript, Markdown, Log chunkers | 34 | ChunkerTests |
@@ -119,7 +119,7 @@ swift test              # 105 tests, 0 failures
 | Log/crash analysis | Basic log chunking | Diagnostic classification, crash report text chunking, symbolication detection | Strong developer adoption wedge — private on-device triage |
 | SwiftUI integration | None | `ChainRunner` with reactive state | Easier app integration |
 | MLX generation options | Fixed parameters | Exposed `GenerateParameters` | Control temperature, maxTokens, topP per call |
-| Tests | ~30 | 105 | 3.5x coverage increase |
+| Tests | ~30 | 107 | 3.5x coverage increase |
 | Docs/adoption | Basic | Adoption-focused README, architecture, changelog, contribution guide | Easier for MLX/Swift developers to understand and adopt |
 
 ## Compatibility

@@ -42,6 +42,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - `preserveOrder` option is now functional — `concurrentMap` returns results in completion order when `preserveOrder` is false, preserving correct chunk labels via `MapResult`.
 - `ChunkPromptFormatter` for richer chunk labels using `DiagnosticSourceLabel` metadata.
 - Conservative default `reservedOutputTokens` of 512 in `ChainExecutionOptions`.
+- Token-vs-word conversion in fallback re-chunking — token budgets are divided by a conservative tokens-per-word ratio before invoking `SentenceAwareChunker`.
 
 ### Changed
 - README repositioned around "Swift-native long-document reasoning for private, on-device MLX apps."
